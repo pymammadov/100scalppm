@@ -4,6 +4,7 @@ import csv
 import glob
 import html
 import json
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUTS = ROOT / "outputs"
 OUT_FILE = OUTPUTS / "strategy_factory_report.html"
+sys.path.append(str(ROOT))
+from src.ranking import rank_candidates
 
 
 def read_json(path: Path) -> Any | None:
@@ -143,6 +146,54 @@ def parse_literal_dict(v: Any) -> dict[str, Any]:
     return {}
 
 
+def parse_min_trades(v: Any, default: int = 20) -> int:
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if digits:
+            return int(digits)
+    return default
+
+
+def normalize_backtest_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                **r,
+                "train_net_pnl": to_float(r.get("train_net_pnl")),
+                "validation_net_pnl": to_float(r.get("validation_net_pnl")),
+                "oos_net_pnl": to_float(r.get("oos_net_pnl")),
+                "train_profit_factor": to_float(r.get("train_profit_factor")),
+                "validation_profit_factor": to_float(r.get("validation_profit_factor")),
+                "oos_profit_factor": to_float(r.get("oos_profit_factor")),
+                "train_expectancy": to_float(r.get("train_expectancy")),
+                "validation_expectancy": to_float(r.get("validation_expectancy")),
+                "oos_expectancy": to_float(r.get("oos_expectancy")),
+                "max_drawdown": to_float(r.get("max_drawdown")),
+                "trade_count": to_int(r.get("trade_count")),
+            }
+        )
+    return out
+
+
+def normalize_robust_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                **r,
+                "fee_stress_pnl_delta": to_float(r.get("fee_stress_pnl_delta")),
+                "slippage_stress_pnl_delta": to_float(r.get("slippage_stress_pnl_delta")),
+                "parameter_stability": to_float(r.get("parameter_stability")),
+                "outlier_dependence": to_float(r.get("outlier_dependence")),
+                "baseline_oos_trade_count": to_int(r.get("baseline_oos_trade_count")),
+            }
+        )
+    return out
+
+
 def main() -> None:
     top5_json = read_json(OUTPUTS / "top5_strategies.json") or []
     top5_md = read_text(OUTPUTS / "top5_strategies.md")
@@ -202,42 +253,23 @@ def main() -> None:
         if mline:
             min_trades = 20
 
-    robust_map = {r.get("family_id", ""): r for r in robust_rows}
-    backtest_map = {r.get("family_id", ""): r for r in backtest_rows}
+    numeric_backtest_rows = normalize_backtest_rows(backtest_rows)
+    numeric_robust_rows = normalize_robust_rows(robust_rows)
+    robust_map = {r.get("family_id", ""): r for r in numeric_robust_rows}
+    backtest_map = {r.get("family_id", ""): r for r in numeric_backtest_rows}
     catalog_map = {r.get("family_id", ""): r for r in catalog_rows}
 
-    top5_cards = []
-    for i, item in enumerate(top5_json, start=1):
-        fid = item.get("family_id", "N/A")
-        bt = backtest_map.get(fid, {})
-        rr = robust_map.get(fid, {})
-        top5_cards.append(
-            {
-                "rank": i,
-                "family_id": fid,
-                "family_name": item.get("family_name") or bt.get("family_name") or "N/A",
-                "hypothesis_class": item.get("hypothesis_class") or bt.get("hypothesis_class") or "N/A",
-                "robust_score": to_float(rr.get("parameter_stability"), 0.0),
-                "validation_pnl": to_float(bt.get("validation_net_pnl"), 0.0),
-                "oos_pnl": to_float(bt.get("oos_net_pnl"), 0.0),
-                "trade_count": to_int(bt.get("trade_count"), 0),
-                "rationale": item.get("rationale") or "N/A",
-            }
-        )
-
-    top_deploy = top5_cards[0]["family_id"] if top5_cards else "N/A"
-    backup = top5_cards[1]["family_id"] if len(top5_cards) > 1 else "N/A"
+    ranking_min_trades = parse_min_trades(min_trades, default=20)
+    ranked_rows = rank_candidates(numeric_backtest_rows, numeric_robust_rows, min_trades=ranking_min_trades)
 
     leaderboard = []
-    for row in backtest_rows:
-        fid = row.get("family_id", "")
-        rr = robust_map.get(fid, {})
-        robust_score = to_float(rr.get("parameter_stability"), 0.0) - abs(to_float(rr.get("fee_stress_pnl_delta"), 0.0)) * 0.0001 - abs(to_float(rr.get("slippage_stress_pnl_delta"), 0.0)) * 0.0001
+    for row in ranked_rows:
         leaderboard.append(
             {
-                "family_id": fid,
+                "family_id": row.get("family_id", ""),
                 "family_name": row.get("family_name", ""),
-                "robust_score": robust_score,
+                "robust_score": to_float(row.get("robustness_score"), 0.0),
+                "parameter_stability_raw": to_float(row.get("parameter_stability"), 0.0),
                 "validation_pnl": to_float(row.get("validation_net_pnl"), 0.0),
                 "oos_pnl": to_float(row.get("oos_net_pnl"), 0.0),
                 "trade_count": to_int(row.get("trade_count"), 0),
@@ -246,7 +278,45 @@ def main() -> None:
                 "hypothesis_class": row.get("hypothesis_class", ""),
             }
         )
-    leaderboard.sort(key=lambda x: x["robust_score"], reverse=True)
+    for row in leaderboard:
+        source = next((r for r in ranked_rows if r.get("family_id") == row["family_id"]), None)
+        assert source is not None, f"Leaderboard family {row['family_id']} missing from ranking source."
+        assert abs(row["robust_score"] - to_float(source.get("robustness_score"), 0.0)) < 1e-12, (
+            f"Leaderboard robust score mismatch for {row['family_id']}."
+        )
+    top5_cards = []
+    for i, row in enumerate(leaderboard[:5], start=1):
+        top5_cards.append(
+            {
+                "rank": i,
+                "family_id": row["family_id"],
+                "family_name": row["family_name"] or "N/A",
+                "hypothesis_class": row["hypothesis_class"] or "N/A",
+                "robust_score": row["robust_score"],
+                "parameter_stability_raw": row["parameter_stability_raw"],
+                "validation_pnl": row["validation_pnl"],
+                "oos_pnl": row["oos_pnl"],
+                "trade_count": row["trade_count"],
+                "rationale": (
+                    f"Robust score={row['robust_score']:.4f} (normalized ranking score), "
+                    f"parameter_stability_raw={row['parameter_stability_raw']:.4f}, "
+                    f"OOS pnl={row['oos_pnl']:.2f}, validation pnl={row['validation_pnl']:.2f}, trades={row['trade_count']}."
+                ),
+            }
+        )
+
+    top_deploy = top5_cards[0]["family_id"] if top5_cards else "N/A"
+    backup = top5_cards[1]["family_id"] if len(top5_cards) > 1 else "N/A"
+
+    expected_top5_ids = [r["family_id"] for r in leaderboard[:5]]
+    cards_top5_ids = [c["family_id"] for c in top5_cards]
+    assert cards_top5_ids == expected_top5_ids, "Top 5 cards must match first 5 leaderboard rows."
+    leaderboard_score_map = {r["family_id"]: r["robust_score"] for r in leaderboard}
+    for c in top5_cards:
+        assert c["family_id"] in leaderboard_score_map, f"Card family {c['family_id']} missing from leaderboard."
+        assert abs(c["robust_score"] - leaderboard_score_map[c["family_id"]]) < 1e-12, (
+            f"Displayed robust score mismatch for {c['family_id']}."
+        )
 
     top5_ids = {c["family_id"] for c in top5_cards}
     hypothesis_counts = Counter(c.get("hypothesis_class", "Unknown") for c in top5_cards)
@@ -346,7 +416,8 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
   <div style=\"display:flex;justify-content:space-between;gap:8px\"><h3>#{c['rank']} {safe(c['family_id'])}</h3><span class=\"badge\">{safe(c['hypothesis_class'])}</span></div>
   <div class=\"small muted\">{safe(c['family_name'])}</div>
   <div class=\"grid g4\" style=\"margin-top:10px\">
-    <div><div class=\"label\">Robust score</div><div>{fmt_num(c['robust_score'],4)}</div></div>
+    <div><div class=\"label\">Robust score (normalized)</div><div>{fmt_num(c['robust_score'],4)}</div></div>
+    <div><div class=\"label\">Parameter stability (raw)</div><div>{fmt_num(c['parameter_stability_raw'],4)}</div></div>
     <div><div class=\"label\">Validation PnL</div><div class=\"{pnl_class(c['validation_pnl'])}\">{fmt_pnl(c['validation_pnl'])}</div></div>
     <div><div class=\"label\">OOS PnL</div><div class=\"{pnl_class(c['oos_pnl'])}\">{fmt_pnl(c['oos_pnl'])}</div></div>
     <div><div class=\"label\">Trade count</div><div>{c['trade_count']}</div></div>
