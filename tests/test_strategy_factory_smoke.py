@@ -20,6 +20,16 @@ class StrategyFactorySmokeTest(unittest.TestCase):
         self.assertTrue((out / "family_catalog.csv").exists())
         self.assertTrue((out / "top5_strategies.json").exists())
 
+    def test_min_trade_filter(self) -> None:
+        tmp = Path("outputs") / "_smoke_tmp_min_trades"
+        tmp.mkdir(parents=True, exist_ok=True)
+        csv = tmp / "sample.csv"
+        out = tmp / "out"
+        maybe_make_sample(csv, rows=1200)
+        result_lo = run_strategy_factory(csv, n_families=100, output_dir=out, min_trades=0)
+        result_hi = run_strategy_factory(csv, n_families=100, output_dir=out, min_trades=30)
+        self.assertGreaterEqual(len(result_lo["ranked"]), len(result_hi["ranked"]))
+
 
 if __name__ == "__main__":
     unittest.main()

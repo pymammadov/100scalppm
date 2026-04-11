@@ -37,7 +37,7 @@ def _read_csv_rows(csv_path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path) -> dict[str, Any]:
+def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_trades: int = 20) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "top5_trade_journals").mkdir(parents=True, exist_ok=True)
     (output_dir / "top5_equity_curves").mkdir(parents=True, exist_ok=True)
@@ -110,7 +110,7 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path) -> d
 
     write_csv(output_dir / "family_backtest_results.csv", backtest_rows)
     write_csv(output_dir / "family_robustness_results.csv", robust_rows)
-    ranked = rank_candidates(backtest_rows, robust_rows)
+    ranked = rank_candidates(backtest_rows, robust_rows, min_trades=min_trades)
     top5 = write_top5_artifacts(ranked, family_lookup, journals_top_source, output_dir)
 
     (output_dir / "failure_taxonomy.json").write_text(json.dumps(failure_counts, indent=2), encoding="utf-8")
