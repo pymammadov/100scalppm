@@ -11,11 +11,16 @@ def _norm(values: list[float]) -> list[float]:
     return [(v - lo) / (hi - lo) for v in values]
 
 
-def rank_candidates(backtest_rows: list[dict[str, Any]], robust_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def rank_candidates(backtest_rows: list[dict[str, Any]], robust_rows: list[dict[str, Any]], min_trades: int = 20) -> list[dict[str, Any]]:
     robust_map = {r["family_id"]: r for r in robust_rows}
     rows = []
     for b in backtest_rows:
-        rows.append({**b, **robust_map.get(b["family_id"], {})})
+        merged = {**b, **robust_map.get(b["family_id"], {})}
+        if merged.get("trade_count", 0) >= min_trades:
+            rows.append(merged)
+
+    if not rows:
+        return []
 
     oos_quality = _norm([r.get("oos_expectancy", 0.0) + 0.5 * r.get("oos_net_pnl", 0.0) for r in rows])
     val_consistency = _norm([
