@@ -1,0 +1,21 @@
+family_id,hypothesis_class,pnl_by_regime,robustness_score
+FAM_0032,failed_breakdown_fade,{'uptrend|high_vol': 282.5857284943961},0.6685610805450218
+FAM_0088,short_only_bear_regime,{'uptrend|high_vol': 236.7119530558818},0.6157945067830871
+FAM_0007,breakdown_scalp,"{'uptrend|high_vol': 93.14076455501325, 'uptrend|low_vol': 268.6268337398553}",0.5463265393774878
+FAM_0056,session_open_impulse,"{'uptrend|high_vol': -130.44629266973166, 'uptrend|low_vol': 268.6268337398553}",0.5237136539610527
+FAM_0009,breakdown_scalp,"{'uptrend|high_vol': 1026.670005095186, 'uptrend|low_vol': 301.0686537331514}",0.520357295995669
+FAM_0066,trend_reentry_scalp,"{'uptrend|high_vol': 1155.4127662761014, 'uptrend|low_vol': -83.07228999510784}",0.5156360157956765
+FAM_0025,failed_breakout_fade,"{'uptrend|high_vol': 718.549988283305, 'uptrend|low_vol': 241.38962235130094}",0.5083990253201567
+FAM_0084,hybrid_continuation_fade,"{'uptrend|high_vol': 1499.526766832279, 'uptrend|low_vol': 329.0627845988038}",0.5077253296375712
+FAM_0098,long_only_expansion,"{'uptrend|high_vol': 1499.526766832279, 'uptrend|low_vol': 329.0627845988038}",0.5077253296375712
+FAM_0027,failed_breakout_fade,"{'downtrend|high_vol': 151.4387678917468, 'downtrend|low_vol': 43.34023088256543}",0.49501769628551023
+FAM_0052,compression_expansion_breakout,"{'uptrend|high_vol': 558.5673062709135, 'uptrend|low_vol': -94.92993809964847}",0.4839597056870282
+FAM_0072,liquidity_sweep_reclaim,"{'uptrend|high_vol': 517.9888906418671, 'uptrend|low_vol': -34.22097294418622}",0.4838602672504156
+FAM_0016,pullback_continuation,"{'uptrend|high_vol': 406.5935506931398, 'uptrend|low_vol': -58.133551403412284}",0.48320018014527527
+FAM_0083,hybrid_continuation_fade,"{'uptrend|high_vol': 679.5685849049796, 'uptrend|low_vol': -225.95158705651235}",0.48277607096342195
+FAM_0015,pullback_continuation,"{'uptrend|high_vol': 597.9749512627524, 'uptrend|low_vol': 8.617101891122317}",0.47946602707254893
+FAM_0085,hybrid_continuation_fade,{'uptrend|high_vol': 119.61629203958768},0.4793896669587583
+FAM_0037,vwap_reversion,"{'uptrend|high_vol': 213.74857722045704, 'uptrend|low_vol': -58.77932595300724}",0.47741491453964957
+FAM_0053,compression_expansion_breakout,{'uptrend|high_vol': 119.61629203958768},0.4761672733188177
+FAM_0001,breakout_scalp,"{'uptrend|high_vol': 628.5666849076699, 'uptrend|low_vol': -157.18687629248808}",0.47471299215148266
+FAM_0096,long_only_expansion,"{'uptrend|high_vol': 628.5666849076699, 'uptrend|low_vol': -157.18687629248808}",0.47471299215148266
