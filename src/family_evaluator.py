@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import Any
 
 DEFAULT_INITIAL_CAPITAL = 10_000.0
+DEFAULT_MAX_LEVERAGE = 2.0
+DEFAULT_MAX_NOTIONAL_MULTIPLIER = 2.0
 
 
 @dataclass
@@ -185,6 +187,23 @@ def backtest_family(
     entry_ts = None
     entry_idx = 0
     throttle_until = -1
+    equity = initial_capital
+    qty = 0.0
+    risk_budget = 0.0
+    notional_cap = 0.0
+
+    def _size_position(entry_px: float, stop_px: float) -> tuple[float, float, float]:
+        risk_per_unit = max(abs(entry_px - stop_px), 1e-9)
+        risk_budget = max(0.0, equity) * max(0.0, p["risk_per_trade"])
+        qty_risk = risk_budget / risk_per_unit
+        notional_cap = min(
+            max(0.0, equity) * DEFAULT_MAX_LEVERAGE,
+            max(0.0, initial_capital) * DEFAULT_MAX_NOTIONAL_MULTIPLIER,
+        )
+        qty_notional = (notional_cap / abs(entry_px)) if entry_px else 0.0
+        qty = max(0.0, min(qty_risk, qty_notional))
+        return qty, risk_budget, notional_cap
+
     for i in range(1, len(rows)):
         row = rows[i]
         prev = rows[i - 1]
@@ -201,6 +220,10 @@ def backtest_family(
             risk = row["atr"] * p["stop_atr"]
             stop = entry_price - risk if sig == 1 else entry_price + risk
             tp = entry_price + risk * p["tp_r"] if sig == 1 else entry_price - risk * p["tp_r"]
+            qty, risk_budget, notional_cap = _size_position(entry_price, stop)
+            if qty <= 0.0:
+                in_pos = 0
+                continue
             entry_ts = row["timestamp"]
             entry_idx = i
             continue
@@ -219,15 +242,19 @@ def backtest_family(
         else:
             exit_price = row["close"] * (1 - (cost.slippage_bps / 10000) * in_pos)
             exit_reason = "time"
-        gross = (exit_price - entry_price) * in_pos
-        fees = (abs(entry_price) + abs(exit_price)) * cost.fee_bps / 10000
-        slip_cost = (abs(entry_price) + abs(exit_price)) * cost.slippage_bps / 10000
+        gross = (exit_price - entry_price) * in_pos * qty
+        fees = (abs(entry_price) + abs(exit_price)) * qty * cost.fee_bps / 10000
+        slip_cost = (abs(entry_price) + abs(exit_price)) * qty * cost.slippage_bps / 10000
         net = gross - fees
+        equity_before = equity
+        equity = max(0.0, equity + net)
         ts_exit = row["timestamp"]
         hold_mins = (ts_exit - entry_ts).total_seconds() / 60
         history = rows[entry_idx : i + 1]
-        mfe = (max(x["high"] for x in history) - entry_price) * in_pos
-        mae = (min(x["low"] for x in history) - entry_price) * in_pos
+        mfe = (max(x["high"] for x in history) - entry_price) * in_pos * qty
+        mae = (min(x["low"] for x in history) - entry_price) * in_pos * qty
+        entry_notional = abs(entry_price) * qty
+        leverage_used = (entry_notional / equity_before) if equity_before > 0 else 0.0
         trades.append(
             {
                 "trade_id": f"{family.family_id}_{split_name}_{len(trades):05d}",
@@ -241,12 +268,18 @@ def backtest_family(
                 "exit_reason": exit_reason,
                 "entry_price": entry_price,
                 "exit_price": exit_price,
-                "qty": 1.0,
+                "qty": qty,
                 "gross_pnl": gross,
                 "net_pnl": net,
                 "fees": fees,
                 "slippage_cost": slip_cost,
                 "R_multiple": gross / (rows[entry_idx]["atr"] + 1e-9),
+                "risk_budget": risk_budget,
+                "notional_cap": notional_cap,
+                "entry_notional": entry_notional,
+                "leverage_used": leverage_used,
+                "equity_before": equity_before,
+                "equity_after": equity,
                 "holding_time": str(ts_exit - entry_ts),
                 "holding_time_minutes": hold_mins,
                 "MFE": mfe,
@@ -268,6 +301,10 @@ def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFA
         return {k: 0.0 for k in ["net_pnl", "profit_factor", "expectancy", "max_drawdown", "max_drawdown_pct", "trade_count", "average_trade_pnl", "average_win", "average_loss", "win_rate", "average_holding_time", "return_pct"]} | {
             "starting_capital": initial_capital,
             "ending_equity": initial_capital,
+            "average_entry_notional": 0.0,
+            "max_entry_notional": 0.0,
+            "average_leverage_used": 0.0,
+            "max_leverage_used": 0.0,
             "pnl_by_side": "{}",
             "pnl_by_setup": "{}",
             "pnl_by_hour": "{}",
@@ -298,6 +335,11 @@ def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFA
             d[k] = d.get(k, 0.0) + t["net_pnl"]
         return str(d)
 
+    entry_notionals = [t.get("entry_notional", abs(t["entry_price"]) * t.get("qty", 0.0)) for t in trades]
+    leverages = [t.get("leverage_used", 0.0) for t in trades]
+    avg_notional = sum(entry_notionals) / len(entry_notionals)
+    avg_leverage = sum(leverages) / len(leverages)
+
     return {
         "starting_capital": initial_capital,
         "ending_equity": initial_capital + sum(pnls),
@@ -313,6 +355,10 @@ def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFA
         "average_loss": sum(losses) / len(losses) if losses else 0.0,
         "win_rate": len(wins) / len(pnls),
         "average_holding_time": sum(t["holding_time_minutes"] for t in trades) / len(trades),
+        "average_entry_notional": avg_notional,
+        "max_entry_notional": max(entry_notionals),
+        "average_leverage_used": avg_leverage,
+        "max_leverage_used": max(leverages),
         "pnl_by_side": group_sum(lambda t: t["side"]),
         "pnl_by_setup": group_sum(lambda t: t["setup_type"]),
         "pnl_by_hour": group_sum(lambda t: t["timestamp_entry"][11:13]),
