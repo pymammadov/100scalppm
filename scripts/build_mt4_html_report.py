@@ -119,6 +119,44 @@ def normalize_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     return out
 
 
+def _should_coerce_key(key: str) -> bool:
+    k = key.lower()
+    numeric_tokens = (
+        "pnl",
+        "profit",
+        "expect",
+        "drawdown",
+        "dd",
+        "count",
+        "trades",
+        "trade_count",
+        "factor",
+        "score",
+        "return",
+        "fee",
+        "slip",
+        "stability",
+        "dependence",
+        "duration",
+        "price",
+    )
+    return any(token in k for token in numeric_tokens)
+
+
+def coerce_numeric_fields(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        coerced: dict[str, Any] = dict(row)
+        for key, value in row.items():
+            if _should_coerce_key(key):
+                if "count" in key.lower() or "trades" in key.lower():
+                    coerced[key] = to_int(value)
+                else:
+                    coerced[key] = to_float(value)
+        out.append(coerced)
+    return out
+
+
 def parse_family_id_from_filename(name: str) -> str | None:
     m = re.search(r"(fam[_-]?\d{4})", name.lower())
     if not m:
@@ -316,9 +354,11 @@ def main() -> None:
     out_dir = args.output_dir
     out_file = args.out_file or (out_dir / "mt4_style_report.html")
 
-    backtest_rows = normalize_rows(read_csv(out_dir / "family_backtest_results.csv"))
-    robust_rows = read_csv(out_dir / "family_robustness_results.csv")
+    backtest_rows = coerce_numeric_fields(normalize_rows(read_csv(out_dir / "family_backtest_results.csv")))
+    robust_rows = coerce_numeric_fields(read_csv(out_dir / "family_robustness_results.csv"))
     top5_json = read_json(out_dir / "top5_strategies.json") or []
+    if isinstance(top5_json, list):
+        top5_json = coerce_numeric_fields(top5_json)
 
     ranked = rank_candidates(backtest_rows, robust_rows, min_trades=20) if backtest_rows else []
     top5_ranked = ranked[:5] if ranked else backtest_rows[:5]
@@ -334,7 +374,7 @@ def main() -> None:
     for tf in trade_files:
         fam = parse_family_id_from_filename(Path(tf).name)
         if fam:
-            journals_by_fam[fam] = read_csv(Path(tf))
+            journals_by_fam[fam] = coerce_numeric_fields(read_csv(Path(tf)))
 
     selected_journal = journals_by_fam.get(top_candidate_id, [])
     if not selected_journal and journals_by_fam:
