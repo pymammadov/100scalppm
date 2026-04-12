@@ -1,0 +1,12 @@
+{
+  "mathematical_integrity": 68,
+  "accounting_integrity": 22,
+  "reporting_consistency": 28,
+  "OOS_governance": 18,
+  "economic_plausibility": 24,
+  "software_reliability": 20,
+  "investor_readiness": 12,
+  "anti_overfitting_discipline": 10,
+  "total_weighted_score": 27.0,
+  "verdict": "FAIL CRITICAL \u2014 results not trustworthy"
+}
