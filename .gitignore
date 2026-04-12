@@ -13,3 +13,6 @@ data/samples/*.csv
 data/samples/*.parquet
 data/**/*.csv
 data/**/*.parquet
+
+# Local generated outputs
+outputs/
