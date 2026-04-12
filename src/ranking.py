@@ -4,6 +4,15 @@ import math
 from typing import Any
 
 
+def _num(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "":
+            return default
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _norm(values: list[float]) -> list[float]:
     lo, hi = min(values), max(values)
     if hi == lo:
@@ -16,25 +25,25 @@ def rank_candidates(backtest_rows: list[dict[str, Any]], robust_rows: list[dict[
     rows = []
     for b in backtest_rows:
         merged = {**b, **robust_map.get(b["family_id"], {})}
-        if merged.get("trade_count", 0) >= min_trades:
+        if _num(merged.get("trade_count", 0.0)) >= min_trades:
             rows.append(merged)
 
     if not rows:
         return []
 
-    oos_quality = _norm([r.get("oos_expectancy", 0.0) + 0.5 * r.get("oos_net_pnl", 0.0) for r in rows])
+    oos_quality = _norm([_num(r.get("oos_expectancy", 0.0)) + 0.5 * _num(r.get("oos_net_pnl", 0.0)) for r in rows])
     val_consistency = _norm([
-        -abs(r.get("train_net_pnl", 0.0) - r.get("validation_net_pnl", 0.0))
-        -abs(r.get("validation_net_pnl", 0.0) - r.get("oos_net_pnl", 0.0))
+        -abs(_num(r.get("train_net_pnl", 0.0)) - _num(r.get("validation_net_pnl", 0.0)))
+        -abs(_num(r.get("validation_net_pnl", 0.0)) - _num(r.get("oos_net_pnl", 0.0)))
         for r in rows
     ])
-    drawdown = _norm([r.get("max_drawdown_pct", r.get("max_drawdown", 0.0)) for r in rows])
-    trade_count = _norm([math.log1p(max(0.0, r.get("trade_count", 0.0))) for r in rows])
-    profit_factor = _norm([r.get("oos_profit_factor", 0.0) for r in rows])
-    fee_slip = _norm([r.get("fee_stress_pnl_delta", -1e9) + r.get("slippage_stress_pnl_delta", -1e9) for r in rows])
-    param_stability = _norm([r.get("parameter_stability", 0.0) for r in rows])
-    overfit_pen = _norm([max(0.0, r.get("train_net_pnl", 0.0) - r.get("oos_net_pnl", 0.0)) for r in rows])
-    outlier_pen = _norm([r.get("outlier_dependence", 1.0) for r in rows])
+    drawdown = _norm([_num(r.get("max_drawdown_pct", r.get("max_drawdown", 0.0))) for r in rows])
+    trade_count = _norm([math.log1p(max(0.0, _num(r.get("trade_count", 0.0)))) for r in rows])
+    profit_factor = _norm([_num(r.get("oos_profit_factor", r.get("profit_factor", 0.0))) for r in rows])
+    fee_slip = _norm([_num(r.get("fee_stress_pnl_delta", -1e9)) + _num(r.get("slippage_stress_pnl_delta", -1e9)) for r in rows])
+    param_stability = _norm([_num(r.get("parameter_stability", r.get("robust_score", 0.0))) for r in rows])
+    overfit_pen = _norm([max(0.0, _num(r.get("train_net_pnl", 0.0)) - _num(r.get("oos_net_pnl", 0.0))) for r in rows])
+    outlier_pen = _norm([_num(r.get("outlier_dependence", 1.0)) for r in rows])
 
     for i, r in enumerate(rows):
         r["robustness_score"] = (
