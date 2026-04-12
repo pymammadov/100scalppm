@@ -1,0 +1,29 @@
+{
+  "date_utc": "2026-04-12",
+  "repository": "pymammadov/100scalppm",
+  "scores": {
+    "economic_plausibility": 5.0,
+    "statistical_rigor": 3.0,
+    "backtest_integrity": 5.5,
+    "oos_credibility": 3.5,
+    "cost_realism": 3.0,
+    "software_quality": 6.0,
+    "reproducibility": 6.0,
+    "reporting_integrity": 5.5,
+    "investor_readiness": 2.5,
+    "research_asset_value": 6.0
+  },
+  "overall_weighted_score_100": 46,
+  "confidence": "medium",
+  "recommendation": "Conditional further research",
+  "classification": "promising_but_immature_prototype",
+  "capital_allocation_status": "not_approved",
+  "paper_trading_status": "not_yet",
+  "key_blockers": [
+    "synthetic_or_limited_data_realism",
+    "multiple_testing_false_discovery_risk",
+    "insufficient_execution_microstructure_modeling",
+    "top_candidate_concentration",
+    "insufficient_institutional_oos_governance"
+  ]
+}
