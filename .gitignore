@@ -1,3 +1,15 @@
 __pycache__/
 *.pyc
 outputs/_smoke_tmp/
+
+# Local market data
+data/samples/*.csv
+data/samples/*.parquet
+data/**/*.csv
+data/**/*.parquet
+
+# Local market data
+data/samples/*.csv
+data/samples/*.parquet
+data/**/*.csv
+data/**/*.parquet
