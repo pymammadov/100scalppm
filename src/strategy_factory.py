@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .family_definitions import StrategyFamily
-from .family_evaluator import CostModel, backtest_family, prepare_features, split_dataset
+from .family_evaluator import CostModel, DEFAULT_INITIAL_CAPITAL, backtest_family, prepare_features, split_dataset
 from .family_generator import generate_strategy_families
 from .ranking import rank_candidates
 from .reporting import write_catalog, write_csv, write_summary, write_top5_artifacts
@@ -37,7 +37,13 @@ def _read_csv_rows(csv_path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_trades: int = 20) -> dict[str, Any]:
+def run_strategy_factory(
+    csv_path: Path,
+    n_families: int,
+    output_dir: Path,
+    min_trades: int = 20,
+    initial_capital: float = DEFAULT_INITIAL_CAPITAL,
+) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "top5_trade_journals").mkdir(parents=True, exist_ok=True)
     (output_dir / "top5_equity_curves").mkdir(parents=True, exist_ok=True)
@@ -63,7 +69,7 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_
             split_metrics: dict[str, dict[str, Any]] = {}
             split_trades: dict[str, list[dict[str, Any]]] = {}
             for split_name, split_rows in splits.items():
-                trades, metrics = backtest_family(split_rows, fam, base_cost, split_name)
+                trades, metrics = backtest_family(split_rows, fam, base_cost, split_name, initial_capital=initial_capital)
                 split_trades[split_name] = trades
                 split_metrics[split_name] = metrics
             all_trades = split_trades["train"] + split_trades["validation"] + split_trades["oos"]
@@ -72,14 +78,21 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_
             if len(all_trades) < 25:
                 failure_counts["too_few_trades"] += 1
 
-            no_cost_oos, no_cost_m = backtest_family(splits["oos"], fam, CostModel(fee_bps=0.0, slippage_bps=0.0), "oos_nocost")
+            no_cost_oos, no_cost_m = backtest_family(
+                splits["oos"], fam, CostModel(fee_bps=0.0, slippage_bps=0.0), "oos_nocost", initial_capital=initial_capital
+            )
             row = {
                 "family_id": fam.family_id,
                 "family_name": fam.family_name,
                 "hypothesis_class": fam.hypothesis_class,
+                "starting_capital": split_metrics["oos"]["starting_capital"],
+                "ending_equity": split_metrics["oos"]["ending_equity"],
                 "train_net_pnl": split_metrics["train"]["net_pnl"],
                 "validation_net_pnl": split_metrics["validation"]["net_pnl"],
                 "oos_net_pnl": split_metrics["oos"]["net_pnl"],
+                "train_return_pct": split_metrics["train"]["return_pct"],
+                "validation_return_pct": split_metrics["validation"]["return_pct"],
+                "oos_return_pct": split_metrics["oos"]["return_pct"],
                 "train_profit_factor": split_metrics["train"]["profit_factor"],
                 "validation_profit_factor": split_metrics["validation"]["profit_factor"],
                 "oos_profit_factor": split_metrics["oos"]["profit_factor"],
@@ -87,6 +100,11 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_
                 "validation_expectancy": split_metrics["validation"]["expectancy"],
                 "oos_expectancy": split_metrics["oos"]["expectancy"],
                 "max_drawdown": min(split_metrics["train"]["max_drawdown"], split_metrics["validation"]["max_drawdown"], split_metrics["oos"]["max_drawdown"]),
+                "max_drawdown_pct": min(
+                    split_metrics["train"]["max_drawdown_pct"],
+                    split_metrics["validation"]["max_drawdown_pct"],
+                    split_metrics["oos"]["max_drawdown_pct"],
+                ),
                 "trade_count": len(all_trades),
                 "average_trade_pnl": (sum(t["net_pnl"] for t in all_trades) / len(all_trades)) if all_trades else 0.0,
                 "average_win": (sum(t["net_pnl"] for t in all_trades if t["net_pnl"] > 0) / max(1, len([t for t in all_trades if t["net_pnl"] > 0])) if all_trades else 0.0),
@@ -103,7 +121,7 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_
                 "pnl_by_regime": split_metrics["oos"]["pnl_by_regime"],
             }
             backtest_rows.append(row)
-            robust_rows.append(run_robustness_tests(splits, fam, base_cost))
+            robust_rows.append(run_robustness_tests(splits, fam, base_cost, initial_capital=initial_capital))
             journals_top_source[fam.family_id] = split_trades["oos"]
         except Exception:
             failure_counts["evaluation_error"] += 1
@@ -111,7 +129,7 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_
     write_csv(output_dir / "family_backtest_results.csv", backtest_rows)
     write_csv(output_dir / "family_robustness_results.csv", robust_rows)
     ranked = rank_candidates(backtest_rows, robust_rows, min_trades=min_trades)
-    top5 = write_top5_artifacts(ranked, family_lookup, journals_top_source, output_dir)
+    top5 = write_top5_artifacts(ranked, family_lookup, journals_top_source, output_dir, initial_capital=initial_capital)
 
     (output_dir / "failure_taxonomy.json").write_text(json.dumps(failure_counts, indent=2), encoding="utf-8")
     regime_survival = [{"family_id": r["family_id"], "hypothesis_class": r["hypothesis_class"], "pnl_by_regime": r["pnl_by_regime"], "robustness_score": r["robustness_score"]} for r in ranked[:20]]
@@ -122,5 +140,6 @@ def run_strategy_factory(csv_path: Path, n_families: int, output_dir: Path, min_
         class_counts=dict(Counter(f.hypothesis_class for f in families)),
         failure_counts=failure_counts,
         regime_survival=regime_survival,
+        initial_capital=initial_capital,
     )
     return {"n_generated": len(families), "n_evaluated": len(backtest_rows), "top5": top5, "ranked": ranked}

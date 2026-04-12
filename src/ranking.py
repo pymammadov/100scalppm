@@ -28,7 +28,7 @@ def rank_candidates(backtest_rows: list[dict[str, Any]], robust_rows: list[dict[
         -abs(r.get("validation_net_pnl", 0.0) - r.get("oos_net_pnl", 0.0))
         for r in rows
     ])
-    drawdown = _norm([r.get("max_drawdown", 0.0) for r in rows])
+    drawdown = _norm([r.get("max_drawdown_pct", r.get("max_drawdown", 0.0)) for r in rows])
     trade_count = _norm([math.log1p(max(0.0, r.get("trade_count", 0.0))) for r in rows])
     profit_factor = _norm([r.get("oos_profit_factor", 0.0) for r in rows])
     fee_slip = _norm([r.get("fee_stress_pnl_delta", -1e9) + r.get("slippage_stress_pnl_delta", -1e9) for r in rows])

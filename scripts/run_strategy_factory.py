@@ -49,13 +49,20 @@ def main() -> None:
     parser.add_argument("--n-families", type=int, default=120)
     parser.add_argument("--min-trades", type=int, default=20)
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
+    parser.add_argument("--initial-capital", type=float, default=10000.0)
     parser.add_argument("--build-sample-if-missing", action="store_true")
     args = parser.parse_args()
 
     if args.build_sample_if_missing:
         maybe_make_sample(args.csv)
 
-    result = run_strategy_factory(args.csv, args.n_families, args.output_dir, min_trades=args.min_trades)
+    result = run_strategy_factory(
+        args.csv,
+        args.n_families,
+        args.output_dir,
+        min_trades=args.min_trades,
+        initial_capital=args.initial_capital,
+    )
     print(f"Generated {result['n_generated']} families")
     print(f"Evaluated {result['n_evaluated']} families")
     print("Top 5 family_ids:", [x["family_id"] for x in result["top5"]])

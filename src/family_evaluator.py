@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+DEFAULT_INITIAL_CAPITAL = 10_000.0
+
 
 @dataclass
 class CostModel:
@@ -169,7 +171,13 @@ def _entry_signal(prev_row: dict[str, Any], row: dict[str, Any], params: dict[st
     return 1 if long_sig else -1 if short_sig else 0
 
 
-def backtest_family(rows: list[dict[str, Any]], family: Any, cost: CostModel, split_name: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def backtest_family(
+    rows: list[dict[str, Any]],
+    family: Any,
+    cost: CostModel,
+    split_name: str,
+    initial_capital: float = DEFAULT_INITIAL_CAPITAL,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     p = family.parameters
     trades: list[dict[str, Any]] = []
     in_pos = 0
@@ -252,12 +260,19 @@ def backtest_family(rows: list[dict[str, Any]], family: Any, cost: CostModel, sp
         )
         in_pos = 0
         throttle_until = i + p["throttle_bars"]
-    return trades, summarize_trades(trades)
+    return trades, summarize_trades(trades, initial_capital=initial_capital)
 
 
-def summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFAULT_INITIAL_CAPITAL) -> dict[str, Any]:
     if not trades:
-        return {k: 0.0 for k in ["net_pnl", "profit_factor", "expectancy", "max_drawdown", "trade_count", "average_trade_pnl", "average_win", "average_loss", "win_rate", "average_holding_time"]} | {"pnl_by_side": "{}", "pnl_by_setup": "{}", "pnl_by_hour": "{}", "pnl_by_regime": "{}"}
+        return {k: 0.0 for k in ["net_pnl", "profit_factor", "expectancy", "max_drawdown", "max_drawdown_pct", "trade_count", "average_trade_pnl", "average_win", "average_loss", "win_rate", "average_holding_time", "return_pct"]} | {
+            "starting_capital": initial_capital,
+            "ending_equity": initial_capital,
+            "pnl_by_side": "{}",
+            "pnl_by_setup": "{}",
+            "pnl_by_hour": "{}",
+            "pnl_by_regime": "{}",
+        }
     pnls = [t["net_pnl"] for t in trades]
     wins = [x for x in pnls if x > 0]
     losses = [x for x in pnls if x < 0]
@@ -266,11 +281,15 @@ def summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
     for p in pnls:
         c += p
         eq.append(c)
-    peak = eq[0]
+    eq_abs = [initial_capital + x for x in eq]
+    peak = eq_abs[0]
     mdd = 0.0
-    for e in eq:
+    mdd_pct = 0.0
+    for e in eq_abs:
         peak = max(peak, e)
         mdd = min(mdd, e - peak)
+        if peak > 0:
+            mdd_pct = min(mdd_pct, ((e - peak) / peak) * 100.0)
 
     def group_sum(key_fn):
         d = {}
@@ -280,10 +299,14 @@ def summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
         return str(d)
 
     return {
+        "starting_capital": initial_capital,
+        "ending_equity": initial_capital + sum(pnls),
         "net_pnl": sum(pnls),
+        "return_pct": (sum(pnls) / initial_capital * 100.0) if initial_capital else 0.0,
         "profit_factor": (sum(wins) / abs(sum(losses))) if losses else sum(wins),
         "expectancy": sum(pnls) / len(pnls),
         "max_drawdown": mdd,
+        "max_drawdown_pct": mdd_pct,
         "trade_count": len(trades),
         "average_trade_pnl": sum(pnls) / len(pnls),
         "average_win": sum(wins) / len(wins) if wins else 0.0,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import glob
 import html
@@ -11,8 +12,6 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUTS = ROOT / "outputs"
-OUT_FILE = OUTPUTS / "strategy_factory_report.html"
 sys.path.append(str(ROOT))
 from src.ranking import rank_candidates
 
@@ -95,13 +94,17 @@ def safe(s: Any) -> str:
     return html.escape("" if s is None else str(s))
 
 
-def compute_trade_journal_stats(rows: list[dict[str, str]]) -> dict[str, Any]:
+def compute_trade_journal_stats(rows: list[dict[str, str]], initial_capital: float) -> dict[str, Any]:
     n = len(rows)
     if n == 0:
         return {
             "trades": 0,
+            "starting_capital": initial_capital,
+            "ending_equity": initial_capital,
             "win_rate": 0.0,
             "net_pnl": 0.0,
+            "return_pct": 0.0,
+            "max_drawdown_pct": 0.0,
             "gross_pnl": 0.0,
             "fees": 0.0,
             "slippage": 0.0,
@@ -112,10 +115,22 @@ def compute_trade_journal_stats(rows: list[dict[str, str]]) -> dict[str, Any]:
     fees = sum(to_float(r.get("fees")) for r in rows)
     slippage = sum(to_float(r.get("slippage_cost")) for r in rows)
     wins = sum(1 for r in rows if to_float(r.get("net_pnl")) > 0)
+    eq = initial_capital
+    peak = initial_capital
+    mdd_pct = 0.0
+    for r in rows:
+        eq += to_float(r.get("net_pnl"))
+        peak = max(peak, eq)
+        if peak > 0:
+            mdd_pct = min(mdd_pct, ((eq - peak) / peak) * 100.0)
     return {
         "trades": n,
+        "starting_capital": initial_capital,
+        "ending_equity": initial_capital + net,
         "win_rate": wins / n,
         "net_pnl": net,
+        "return_pct": (net / initial_capital * 100.0) if initial_capital else 0.0,
+        "max_drawdown_pct": mdd_pct,
         "gross_pnl": gross,
         "fees": fees,
         "slippage": slippage,
@@ -165,6 +180,9 @@ def normalize_backtest_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "train_net_pnl": to_float(r.get("train_net_pnl")),
                 "validation_net_pnl": to_float(r.get("validation_net_pnl")),
                 "oos_net_pnl": to_float(r.get("oos_net_pnl")),
+                "starting_capital": to_float(r.get("starting_capital"), 10000.0),
+                "ending_equity": to_float(r.get("ending_equity")),
+                "oos_return_pct": to_float(r.get("oos_return_pct")),
                 "train_profit_factor": to_float(r.get("train_profit_factor")),
                 "validation_profit_factor": to_float(r.get("validation_profit_factor")),
                 "oos_profit_factor": to_float(r.get("oos_profit_factor")),
@@ -172,6 +190,7 @@ def normalize_backtest_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "validation_expectancy": to_float(r.get("validation_expectancy")),
                 "oos_expectancy": to_float(r.get("oos_expectancy")),
                 "max_drawdown": to_float(r.get("max_drawdown")),
+                "max_drawdown_pct": to_float(r.get("max_drawdown_pct")),
                 "trade_count": to_int(r.get("trade_count")),
             }
         )
@@ -195,18 +214,27 @@ def normalize_robust_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    top5_json = read_json(OUTPUTS / "top5_strategies.json") or []
-    top5_md = read_text(OUTPUTS / "top5_strategies.md")
-    sf_summary_json = read_json(OUTPUTS / "strategy_factory_summary.json")
-    sf_summary_md = read_text(OUTPUTS / "strategy_factory_summary.md")
-    backtest_rows = read_csv(OUTPUTS / "family_backtest_results.csv")
-    robust_rows = read_csv(OUTPUTS / "family_robustness_results.csv")
-    catalog_rows = read_csv(OUTPUTS / "family_catalog.csv")
-    failure_taxonomy = read_json(OUTPUTS / "failure_taxonomy.json")
-    regime_rows = read_csv(OUTPUTS / "regime_survival_table.csv")
-    fam_0039 = read_json(OUTPUTS / "fam_0039_deep_dive.json")
-    fam_0053 = read_json(OUTPUTS / "fam_0053_deep_dive.json")
-    fam_comparison_md = read_text(OUTPUTS / "fam_comparison.md")
+    parser = argparse.ArgumentParser(description="Build strategy factory HTML report")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs")
+    parser.add_argument("--out-file", type=Path, default=None)
+    parser.add_argument("--initial-capital", type=float, default=10000.0)
+    args = parser.parse_args()
+
+    outputs_dir = args.output_dir
+    out_file = args.out_file or (outputs_dir / "strategy_factory_report.html")
+
+    top5_json = read_json(outputs_dir / "top5_strategies.json") or []
+    top5_md = read_text(outputs_dir / "top5_strategies.md")
+    sf_summary_json = read_json(outputs_dir / "strategy_factory_summary.json")
+    sf_summary_md = read_text(outputs_dir / "strategy_factory_summary.md")
+    backtest_rows = read_csv(outputs_dir / "family_backtest_results.csv")
+    robust_rows = read_csv(outputs_dir / "family_robustness_results.csv")
+    catalog_rows = read_csv(outputs_dir / "family_catalog.csv")
+    failure_taxonomy = read_json(outputs_dir / "failure_taxonomy.json")
+    regime_rows = read_csv(outputs_dir / "regime_survival_table.csv")
+    fam_0039 = read_json(outputs_dir / "fam_0039_deep_dive.json")
+    fam_0053 = read_json(outputs_dir / "fam_0053_deep_dive.json")
+    fam_comparison_md = read_text(outputs_dir / "fam_comparison.md")
 
     available_files = []
     candidate_sources = [
@@ -224,10 +252,10 @@ def main() -> None:
         "fam_comparison.md",
     ]
     for fn in candidate_sources:
-        if (OUTPUTS / fn).exists():
+        if (outputs_dir / fn).exists():
             available_files.append(f"outputs/{fn}")
 
-    trade_files = sorted(glob.glob(str(OUTPUTS / "top5_trade_journals" / "*.csv")))
+    trade_files = sorted(glob.glob(str(outputs_dir / "top5_trade_journals" / "*.csv")))
     for tf in trade_files:
         rel = Path(tf).relative_to(ROOT)
         available_files.append(str(rel).replace("\\", "/"))
@@ -273,7 +301,7 @@ def main() -> None:
                 "validation_pnl": to_float(row.get("validation_net_pnl"), 0.0),
                 "oos_pnl": to_float(row.get("oos_net_pnl"), 0.0),
                 "trade_count": to_int(row.get("trade_count"), 0),
-                "max_drawdown": to_float(row.get("max_drawdown"), 0.0),
+                "max_drawdown": to_float(row.get("max_drawdown_pct", row.get("max_drawdown")), 0.0),
                 "profit_factor": to_float(row.get("oos_profit_factor"), 0.0),
                 "hypothesis_class": row.get("hypothesis_class", ""),
             }
@@ -339,7 +367,7 @@ def main() -> None:
     for tf in trade_files:
         p = Path(tf)
         rows = read_csv(p)
-        stats = compute_trade_journal_stats(rows)
+        stats = compute_trade_journal_stats(rows, initial_capital=args.initial_capital)
         preview = rows[:8]
         trade_summaries.append({"file": p.name, "stats": stats, "preview": preview})
 
@@ -401,6 +429,7 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     <div class=\"card\"><div class=\"label\">Families tested</div><div class=\"kpi\">{safe(families_tested or 'data not found')}</div></div>
     <div class=\"card\"><div class=\"label\">Candidates passing filters</div><div class=\"kpi\">{safe(candidates_passing or 'data not found')}</div></div>
     <div class=\"card\"><div class=\"label\">Min trades threshold</div><div class=\"kpi\">{safe(min_trades or 'data not found')}</div></div>
+    <div class=\"card\"><div class=\"label\">Starting capital (USD)</div><div class=\"kpi\">{fmt_num(args.initial_capital, 2)}</div></div>
     <div class=\"card\"><div class=\"label\">Top / Backup</div><div class=\"kpi\">{safe(top_deploy)} <span class=\"muted\">/</span> {safe(backup)}</div></div>
   </div>
   <p style=\"margin-top:14px\">Current conclusion: Prioritize <b>{safe(top_deploy)}</b> for hardening, keep <b>{safe(backup)}</b> as secondary candidate, and continue strict cost/stability stress before any live transition.</p>
@@ -439,13 +468,13 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
 <th onclick="sortTable(3)">validation_pnl</th>
 <th onclick="sortTable(4)">oos_pnl</th>
 <th onclick="sortTable(5)">trade_count</th>
-<th onclick="sortTable(6)">max_drawdown</th>
+<th onclick="sortTable(6)">max_drawdown_pct</th>
 <th onclick="sortTable(7)">profit_factor</th>
 </tr></thead><tbody>
 """
         for r in leaderboard:
             cls = "top5" if r["family_id"] in top5_ids else ""
-            html_out += f"""<tr class=\"{cls}\"><td>{safe(r['family_id'])}</td><td>{safe(r['family_name'])}</td><td>{fmt_num(r['robust_score'],4)}</td><td class=\"{pnl_class(r['validation_pnl'])}\">{fmt_pnl(r['validation_pnl'])}</td><td class=\"{pnl_class(r['oos_pnl'])}\">{fmt_pnl(r['oos_pnl'])}</td><td>{r['trade_count']}</td><td class=\"{pnl_class(r['max_drawdown'])}\">{fmt_num(r['max_drawdown'],2)}</td><td>{fmt_num(r['profit_factor'],3)}</td></tr>"""
+            html_out += f"""<tr class=\"{cls}\"><td>{safe(r['family_id'])}</td><td>{safe(r['family_name'])}</td><td>{fmt_num(r['robust_score'],4)}</td><td class=\"{pnl_class(r['validation_pnl'])}\">{fmt_pnl(r['validation_pnl'])}</td><td class=\"{pnl_class(r['oos_pnl'])}\">{fmt_pnl(r['oos_pnl'])}</td><td>{r['trade_count']}</td><td class=\"{pnl_class(r['max_drawdown'])}\">{fmt_num(r['max_drawdown'],2)}%</td><td>{fmt_num(r['profit_factor'],3)}</td></tr>"""
         html_out += "</tbody></table></div>"
     else:
         html_out += "<div class='card'>data not found</div>"
@@ -498,8 +527,12 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
   <h3>{safe(t['file'])}</h3>
   <div class='grid g4'>
     <div><div class='label'>Trades</div><div>{s['trades']}</div></div>
+    <div><div class='label'>Starting Capital</div><div>{fmt_pnl(s['starting_capital'])}</div></div>
+    <div><div class='label'>Ending Equity</div><div class='{pnl_class(s['net_pnl'])}'>{fmt_pnl(s['ending_equity'])}</div></div>
     <div><div class='label'>Win rate</div><div>{s['win_rate']*100:.2f}%</div></div>
     <div><div class='label'>Net PnL</div><div class='{pnl_class(s['net_pnl'])}'>{fmt_pnl(s['net_pnl'])}</div></div>
+    <div><div class='label'>Return %</div><div class='{pnl_class(s['return_pct'])}'>{fmt_num(s['return_pct'],2)}%</div></div>
+    <div><div class='label'>Max DD %</div><div class='{pnl_class(s['max_drawdown_pct'])}'>{fmt_num(s['max_drawdown_pct'],2)}%</div></div>
     <div><div class='label'>Gross PnL</div><div class='{pnl_class(s['gross_pnl'])}'>{fmt_pnl(s['gross_pnl'])}</div></div>
     <div><div class='label'>Fees</div><div class='{pnl_class(-s['fees'])}'>{fmt_pnl(s['fees'])}</div></div>
     <div><div class='label'>Slippage</div><div class='{pnl_class(-s['slippage'])}'>{fmt_pnl(s['slippage'])}</div></div>
@@ -583,9 +616,9 @@ function sortTable(n){
 </body></html>
 """
 
-    OUTPUTS.mkdir(parents=True, exist_ok=True)
-    OUT_FILE.write_text(html_out, encoding="utf-8")
-    print(str(OUT_FILE.as_posix()))
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(html_out, encoding="utf-8")
+    print(str(out_file.as_posix()))
     print("USED_SOURCES:")
     for src in available_files:
         print(src)
