@@ -28,8 +28,8 @@ def _parse_bucket(value: str) -> dict[str, float]:
     return {}
 
 
-def _equity_curve(trades: list[dict]) -> list[float]:
-    c = 0.0
+def _equity_curve(trades: list[dict], initial_capital: float) -> list[float]:
+    c = initial_capital
     out = []
     for t in trades:
         c += t["net_pnl"]
@@ -37,7 +37,7 @@ def _equity_curve(trades: list[dict]) -> list[float]:
     return out
 
 
-def _perturbation_report(splits: dict[str, list[dict]], fam, base_cost: CostModel) -> list[dict]:
+def _perturbation_report(splits: dict[str, list[dict]], fam, base_cost: CostModel, initial_capital: float) -> list[dict]:
     bumps = [0.85, 0.9, 1.1, 1.15]
     rows = []
     for bump in bumps:
@@ -52,8 +52,8 @@ def _perturbation_report(splits: dict[str, list[dict]], fam, base_cost: CostMode
             rule_summary=fam.rule_summary,
             parameters=p,
         )
-        _, val_metrics = backtest_family(splits["validation"], fam_pert, base_cost, f"val_p_{bump}")
-        _, oos_metrics = backtest_family(splits["oos"], fam_pert, base_cost, f"oos_p_{bump}")
+        _, val_metrics = backtest_family(splits["validation"], fam_pert, base_cost, f"val_p_{bump}", initial_capital=initial_capital)
+        _, oos_metrics = backtest_family(splits["oos"], fam_pert, base_cost, f"oos_p_{bump}", initial_capital=initial_capital)
         rows.append(
             {
                 "bump": bump,
@@ -68,15 +68,15 @@ def _perturbation_report(splits: dict[str, list[dict]], fam, base_cost: CostMode
     return rows
 
 
-def _deep_dive_for_family(fam, splits: dict[str, list[dict]], base_cost: CostModel) -> dict:
-    oos_trades, oos_metrics = backtest_family(splits["oos"], fam, base_cost, "oos")
+def _deep_dive_for_family(fam, splits: dict[str, list[dict]], base_cost: CostModel, initial_capital: float) -> dict:
+    oos_trades, oos_metrics = backtest_family(splits["oos"], fam, base_cost, "oos", initial_capital=initial_capital)
     fee_stress_cost = CostModel(fee_bps=base_cost.fee_bps * 1.6, slippage_bps=base_cost.slippage_bps)
     slip_stress_cost = CostModel(fee_bps=base_cost.fee_bps, slippage_bps=base_cost.slippage_bps * 2.0)
 
-    _, fee_metrics = backtest_family(splits["oos"], fam, fee_stress_cost, "oos_fee")
-    _, slip_metrics = backtest_family(splits["oos"], fam, slip_stress_cost, "oos_slippage")
+    _, fee_metrics = backtest_family(splits["oos"], fam, fee_stress_cost, "oos_fee", initial_capital=initial_capital)
+    _, slip_metrics = backtest_family(splits["oos"], fam, slip_stress_cost, "oos_slippage", initial_capital=initial_capital)
 
-    robust = run_robustness_tests(splits, fam, base_cost)
+    robust = run_robustness_tests(splits, fam, base_cost, initial_capital=initial_capital)
 
     return {
         "family_id": fam.family_id,
@@ -100,10 +100,10 @@ def _deep_dive_for_family(fam, splits: dict[str, list[dict]], base_cost: CostMod
             "delta": slip_metrics["net_pnl"] - oos_metrics["net_pnl"],
             "stressed_slippage_bps": slip_stress_cost.slippage_bps,
         },
-        "parameter_perturbation_report": _perturbation_report(splits, fam, base_cost),
+        "parameter_perturbation_report": _perturbation_report(splits, fam, base_cost, initial_capital=initial_capital),
         "pnl_by_hour": _parse_bucket(oos_metrics["pnl_by_hour"]),
         "pnl_by_regime": _parse_bucket(oos_metrics["pnl_by_regime"]),
-        "equity_curve": _equity_curve(oos_trades),
+        "equity_curve": _equity_curve(oos_trades, initial_capital=initial_capital),
         "robustness_snapshot": robust,
     }
 
@@ -117,6 +117,7 @@ def main() -> None:
     parser.add_argument("--min-trades-alt", type=int, default=30)
     parser.add_argument("--sample-rows", type=int, default=50000)
     parser.add_argument("--build-sample-if-missing", action="store_true")
+    parser.add_argument("--initial-capital", type=float, default=10000.0)
     args = parser.parse_args()
 
     if args.build_sample_if_missing:
@@ -137,7 +138,7 @@ def main() -> None:
         all_trades = []
         split_metrics = {}
         for split_name, split_rows in splits.items():
-            trades, metrics = backtest_family(split_rows, fam, base_cost, split_name)
+            trades, metrics = backtest_family(split_rows, fam, base_cost, split_name, initial_capital=args.initial_capital)
             all_trades.extend(trades)
             split_metrics[split_name] = metrics
         backtest_rows.append(
@@ -145,16 +146,20 @@ def main() -> None:
                 "family_id": fam.family_id,
                 "family_name": fam.family_name,
                 "hypothesis_class": fam.hypothesis_class,
+                "starting_capital": split_metrics["oos"]["starting_capital"],
+                "ending_equity": split_metrics["oos"]["ending_equity"],
                 "train_net_pnl": split_metrics["train"]["net_pnl"],
                 "validation_net_pnl": split_metrics["validation"]["net_pnl"],
                 "oos_net_pnl": split_metrics["oos"]["net_pnl"],
+                "oos_return_pct": split_metrics["oos"]["return_pct"],
                 "oos_expectancy": split_metrics["oos"]["expectancy"],
                 "oos_profit_factor": split_metrics["oos"]["profit_factor"],
                 "max_drawdown": min(split_metrics["train"]["max_drawdown"], split_metrics["validation"]["max_drawdown"], split_metrics["oos"]["max_drawdown"]),
+                "max_drawdown_pct": min(split_metrics["train"]["max_drawdown_pct"], split_metrics["validation"]["max_drawdown_pct"], split_metrics["oos"]["max_drawdown_pct"]),
                 "trade_count": len(all_trades),
             }
         )
-        robust_rows.append(run_robustness_tests(splits, fam, base_cost))
+        robust_rows.append(run_robustness_tests(splits, fam, base_cost, initial_capital=args.initial_capital))
 
     ranked_20 = rank_candidates(backtest_rows, robust_rows, min_trades=args.min_trades)
     ranked_30 = rank_candidates(backtest_rows, robust_rows, min_trades=args.min_trades_alt)
@@ -162,7 +167,7 @@ def main() -> None:
     deep_dives = {}
     for fam_id in TARGET_FAMILIES:
         fam = fam_lookup[fam_id]
-        deep_dives[fam_id] = _deep_dive_for_family(fam, splits, base_cost)
+        deep_dives[fam_id] = _deep_dive_for_family(fam, splits, base_cost, initial_capital=args.initial_capital)
 
     (args.output_dir / "fam_0053_deep_dive.json").write_text(json.dumps(deep_dives["FAM_0053"], indent=2), encoding="utf-8")
     (args.output_dir / "fam_0039_deep_dive.json").write_text(json.dumps(deep_dives["FAM_0039"], indent=2), encoding="utf-8")
@@ -177,6 +182,7 @@ def main() -> None:
         f"- Dataset rows: {len(data)}",
         f"- Ranking filter min_trades={args.min_trades}: {len(ranked_20)} candidates survive",
         f"- Ranking filter min_trades={args.min_trades_alt}: {len(ranked_30)} candidates survive",
+        f"- Starting capital: {args.initial_capital:.2f}",
         "",
         "## Candidate Scores (min_trades=20)",
         f"- FAM_0053 robustness_score: {score_0053:.6f}",

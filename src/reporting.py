@@ -26,14 +26,14 @@ def write_catalog(families: list[StrategyFamily], output_dir: Path) -> Path:
     return path
 
 
-def _equity_svg(trades: list[dict[str, Any]], out_path: Path) -> None:
+def _equity_svg(trades: list[dict[str, Any]], out_path: Path, initial_capital: float) -> None:
     eq = []
-    c = 0.0
+    c = initial_capital
     for t in trades:
         c += t["net_pnl"]
         eq.append(c)
     if not eq:
-        eq = [0.0]
+        eq = [initial_capital]
     w, h = 800, 300
     minv, maxv = min(eq), max(eq)
     rng = (maxv - minv) or 1.0
@@ -46,12 +46,21 @@ def _equity_svg(trades: list[dict[str, Any]], out_path: Path) -> None:
     out_path.write_text(svg, encoding="utf-8")
 
 
-def write_top5_artifacts(ranked: list[dict[str, Any]], family_lookup: dict[str, StrategyFamily], journals: dict[str, list[dict[str, Any]]], output_dir: Path) -> list[dict[str, Any]]:
+def write_top5_artifacts(
+    ranked: list[dict[str, Any]],
+    family_lookup: dict[str, StrategyFamily],
+    journals: dict[str, list[dict[str, Any]]],
+    output_dir: Path,
+    initial_capital: float,
+) -> list[dict[str, Any]]:
     top5 = ranked[:5]
     records = []
     for row in top5:
         fam = family_lookup[row["family_id"]]
-        rationale = f"Robust score={row['robustness_score']:.4f}, OOS pnl={row['oos_net_pnl']:.2f}, validation pnl={row['validation_net_pnl']:.2f}, trades={int(row['trade_count'])}."
+        rationale = (
+            f"Robust score={row['robustness_score']:.4f}, OOS pnl={row['oos_net_pnl']:.2f}, "
+            f"OOS return={row.get('oos_return_pct', 0.0):.2f}%, validation pnl={row['validation_net_pnl']:.2f}, trades={int(row['trade_count'])}."
+        )
         rec = {
             "family_id": fam.family_id,
             "family_name": fam.family_name,
@@ -64,7 +73,7 @@ def write_top5_artifacts(ranked: list[dict[str, Any]], family_lookup: dict[str, 
         t = journals.get(fam.family_id, [])
         if t:
             write_csv(output_dir / "top5_trade_journals" / f"{fam.family_id}.csv", t)
-            _equity_svg(t, output_dir / "top5_equity_curves" / f"{fam.family_id}.svg")
+            _equity_svg(t, output_dir / "top5_equity_curves" / f"{fam.family_id}.svg", initial_capital=initial_capital)
 
     (output_dir / "top5_strategies.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
     lines = ["# Top 5 Robust Strategies", ""]
@@ -74,8 +83,22 @@ def write_top5_artifacts(ranked: list[dict[str, Any]], family_lookup: dict[str, 
     return records
 
 
-def write_summary(output_dir: Path, n_generated: int, n_evaluated: int, class_counts: dict[str, int], failure_counts: dict[str, int], regime_survival: list[dict[str, Any]]) -> None:
-    lines = ["# Strategy Factory Summary", f"- Families generated: {n_generated}", f"- Families evaluated: {n_evaluated}", "- Hypothesis classes explored:"]
+def write_summary(
+    output_dir: Path,
+    n_generated: int,
+    n_evaluated: int,
+    class_counts: dict[str, int],
+    failure_counts: dict[str, int],
+    regime_survival: list[dict[str, Any]],
+    initial_capital: float,
+) -> None:
+    lines = [
+        "# Strategy Factory Summary",
+        f"- Families generated: {n_generated}",
+        f"- Families evaluated: {n_evaluated}",
+        f"- Initial capital (USD): {initial_capital:.2f}",
+        "- Hypothesis classes explored:",
+    ]
     for k, v in class_counts.items():
         lines.append(f"  - {k}: {v}")
     lines.append("- Failure taxonomy:")
