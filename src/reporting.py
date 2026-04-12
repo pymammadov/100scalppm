@@ -59,7 +59,8 @@ def write_top5_artifacts(
         fam = family_lookup[row["family_id"]]
         rationale = (
             f"Robust score={row['robustness_score']:.4f}, OOS pnl={row['oos_net_pnl']:.2f}, "
-            f"OOS return={row.get('oos_return_pct', 0.0):.2f}%, validation pnl={row['validation_net_pnl']:.2f}, trades={int(row['trade_count'])}."
+            f"OOS return={row.get('oos_return_pct', 0.0):.2f}%, validation pnl={row['validation_net_pnl']:.2f}, "
+            f"trades={int(row['trade_count'])}, max lev={row.get('max_leverage_used', 0.0):.2f}x."
         )
         rec = {
             "family_id": fam.family_id,
