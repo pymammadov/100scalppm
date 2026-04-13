@@ -428,8 +428,12 @@ def main() -> None:
 
     trade_metrics = build_trade_metrics(selected_journal, args.initial_capital)
     top5_view = []
+    seen_family_ids: set[str] = set()
     for r in top5_ranked:
         fid = str(r.get("family_id", ""))
+        if not fid or fid in seen_family_ids:
+            continue
+        seen_family_ids.add(fid)
         top5_view.append(recompute_candidate_metrics_from_journal(fid, journals_by_fam, args.initial_capital))
 
     symbol = "BTCUSDT"
