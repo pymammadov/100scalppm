@@ -344,6 +344,49 @@ def build_trade_metrics(rows: list[dict[str, Any]], start_capital: float) -> dic
     }
 
 
+def recompute_candidate_metrics_from_journal(
+    family_id: str,
+    journals_by_fam: dict[str, list[dict[str, Any]]],
+    start_capital: float,
+) -> dict[str, Any]:
+    journal_rows = journals_by_fam.get(family_id, [])
+    if not journal_rows:
+        raise FileNotFoundError(
+            f"Missing journal for candidate {family_id}. "
+            "SECTION 6 requires per-candidate journal data from outputs/top5_trade_journals."
+        )
+
+    trade_metrics = build_trade_metrics(journal_rows, start_capital)
+    metrics = trade_metrics["metrics"]
+    total_net_profit = to_float(metrics.get("Total Net Profit"))
+    total_trades = to_int(metrics.get("Total Trades"))
+    win_rate_pct = to_float(metrics.get("Profit trades (% of total)"))
+    profit_factor = to_float(metrics.get("Profit Factor"))
+    drawdown_pct = to_float(metrics.get("Relative Drawdown"))
+    return_pct = (total_net_profit / start_capital * 100.0) if start_capital else 0.0
+
+    if total_trades != len(journal_rows):
+        raise AssertionError(
+            f"Candidate {family_id} total_trades mismatch: "
+            f"metrics={total_trades}, journal_rows={len(journal_rows)}"
+        )
+    if total_net_profit > 0 and win_rate_pct == 0.0:
+        raise AssertionError(
+            f"Candidate {family_id} has positive net profit ({total_net_profit}) "
+            "but zero win rate; SECTION 6 metrics must match journal truth."
+        )
+
+    return {
+        "family_id": family_id,
+        "total_net_profit": total_net_profit,
+        "profit_factor": profit_factor,
+        "drawdown_pct": drawdown_pct,
+        "total_trades": total_trades,
+        "return_pct": return_pct,
+        "win_rate_pct": win_rate_pct,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build MT4-style HTML report")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs")
@@ -377,29 +420,17 @@ def main() -> None:
             journals_by_fam[fam] = coerce_numeric_fields(read_csv(Path(tf)))
 
     selected_journal = journals_by_fam.get(top_candidate_id, [])
-    if not selected_journal and journals_by_fam:
-        first_fam = sorted(journals_by_fam.keys())[0]
-        top_candidate_id = top_candidate_id or first_fam
-        selected_journal = journals_by_fam[first_fam]
+    if top_candidate_id and not selected_journal:
+        raise FileNotFoundError(
+            f"Missing selected candidate journal for {top_candidate_id}. "
+            "Cannot build report with mixed/missing SECTION 6 scope."
+        )
 
     trade_metrics = build_trade_metrics(selected_journal, args.initial_capital)
-
-    row_map = {str(r.get("family_id", "")): r for r in backtest_rows}
     top5_view = []
     for r in top5_ranked:
         fid = str(r.get("family_id", ""))
-        source = row_map.get(fid, r)
-        top5_view.append(
-            {
-                "family_id": fid,
-                "total_net_profit": to_float(source.get("oos_net_pnl")),
-                "profit_factor": to_float(source.get("oos_profit_factor")),
-                "drawdown_pct": to_float(source.get("max_drawdown_pct")),
-                "total_trades": to_int(source.get("trade_count")),
-                "return_pct": to_float(source.get("oos_return_pct")),
-                "win_rate": (100.0 * len([x for x in selected_journal if to_float(x.get("net_pnl")) > 0]) / len(selected_journal)) if selected_journal and fid == top_candidate_id else 0.0,
-            }
-        )
+        top5_view.append(recompute_candidate_metrics_from_journal(fid, journals_by_fam, args.initial_capital))
 
     symbol = "BTCUSDT"
     timeframe = "N/A"
@@ -488,7 +519,7 @@ h2 {{ font-size: 14px; margin: 16px 0 8px; border-bottom: 1px solid #cfcfcf; pad
 <table class='tbl'><thead><tr><th>Family ID</th><th>Total Net Profit</th><th>Profit Factor</th><th>Drawdown %</th><th>Total Trades</th><th>Return %</th><th>Win Rate %</th></tr></thead><tbody>
 """
     for t in top5_view:
-        html_out += f"<tr><td>{safe(t['family_id'])}</td><td>{fmt_num(t['total_net_profit'],2)}</td><td>{fmt_num(t['profit_factor'],3)}</td><td>{fmt_pct(t['drawdown_pct'])}</td><td>{safe(t['total_trades'])}</td><td>{fmt_pct(t['return_pct'])}</td><td>{fmt_pct(t['win_rate'])}</td></tr>"
+        html_out += f"<tr><td>{safe(t['family_id'])}</td><td>{fmt_num(t['total_net_profit'],2)}</td><td>{fmt_num(t['profit_factor'],3)}</td><td>{fmt_pct(t['drawdown_pct'])}</td><td>{safe(t['total_trades'])}</td><td>{fmt_pct(t['return_pct'])}</td><td>{fmt_pct(t['win_rate_pct'])}</td></tr>"
     html_out += "</tbody></table>"
 
     html_out += """
