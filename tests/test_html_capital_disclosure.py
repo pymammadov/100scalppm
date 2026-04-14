@@ -82,10 +82,17 @@ def test_report_discloses_capital_model_and_trade_notional(tmp_path: Path) -> No
     subprocess.run([sys.executable, str(script_path), "--output-dir", str(out_dir), "--out-file", str(report_path)], check=True)
     html = report_path.read_text(encoding="utf-8")
 
-    assert "Initial capital (USD)" in html
+    assert "Initial capital" in html
     assert "10,000.00" in html
     assert "Sizing model" in html
     assert "equity-based" in html
+    assert "Max leverage" in html
+    assert "1.00x" in html
     assert "Peak leverage used" in html
+    assert "Average entry notional" in html
+    assert "Max entry notional" in html
     assert "entry_notional" in html
     assert ">qty<" in html
+    assert "leverage_used" in html
+    assert "starting_equity_before_trade" in html
+    assert "ending_equity_after_trade" in html
