@@ -52,11 +52,34 @@ def find_first_existing(outputs_dir: Path, candidates: list[str]) -> Path | None
     return None
 
 
+def find_first_existing_dynamic(outputs_dir: Path, candidates: list[str]) -> Path | None:
+    direct = find_first_existing(outputs_dir, candidates)
+    if direct:
+        return direct
+    for name in candidates:
+        matches = sorted(p for p in outputs_dir.rglob(name) if p.is_file())
+        if matches:
+            return matches[0]
+    return None
+
+
 def find_all_existing(outputs_dir: Path, patterns: list[str]) -> list[Path]:
     found: list[Path] = []
     seen: set[str] = set()
     for pat in patterns:
         for p in sorted(outputs_dir.glob(pat)):
+            key = str(p.resolve())
+            if p.is_file() and key not in seen:
+                found.append(p)
+                seen.add(key)
+    return found
+
+
+def find_all_existing_dynamic(outputs_dir: Path, patterns: list[str]) -> list[Path]:
+    found = find_all_existing(outputs_dir, patterns)
+    seen: set[str] = {str(p.resolve()) for p in found}
+    for pat in patterns:
+        for p in sorted(outputs_dir.rglob(pat)):
             key = str(p.resolve())
             if p.is_file() and key not in seen:
                 found.append(p)
@@ -273,31 +296,41 @@ def main() -> None:
             available_files.append(rel)
             seen_available.add(rel)
 
-    top5_json_path = find_first_existing(outputs_dir, ["top5_strategies.json", "top_strategies.json"])
-    top5_md_path = find_first_existing(outputs_dir, ["top5_strategies.md", "top_strategies.md"])
-    sf_summary_json_path = find_first_existing(
+    top5_json_path = find_first_existing_dynamic(outputs_dir, ["top5_strategies.json", "top_strategies.json"])
+    top5_md_path = find_first_existing_dynamic(outputs_dir, ["top5_strategies.md", "top_strategies.md"])
+    sf_summary_json_path = find_first_existing_dynamic(
         outputs_dir,
         ["strategy_factory_summary.json", "summary.json", "factory_summary.json"],
     )
-    sf_summary_md_path = find_first_existing(
+    sf_summary_md_path = find_first_existing_dynamic(
         outputs_dir,
         ["strategy_factory_summary.md", "summary.md", "factory_summary.md"],
     )
-    backtest_path = find_first_existing(
+    backtest_path = find_first_existing_dynamic(
         outputs_dir,
-        ["family_backtest_results.csv", "backtest_results.csv", "candidates_backtest_results.csv"],
+        [
+            "family_backtest_results.csv",
+            "backtest_results.csv",
+            "candidates_backtest_results.csv",
+            "*backtest*.csv",
+        ],
     )
-    robust_path = find_first_existing(
+    robust_path = find_first_existing_dynamic(
         outputs_dir,
-        ["family_robustness_results.csv", "robustness_results.csv", "candidates_robustness_results.csv"],
+        [
+            "family_robustness_results.csv",
+            "robustness_results.csv",
+            "candidates_robustness_results.csv",
+            "*robust*.csv",
+        ],
     )
-    catalog_path = find_first_existing(outputs_dir, ["family_catalog.csv", "catalog.csv", "families.csv"])
-    failure_path = find_first_existing(outputs_dir, ["failure_taxonomy.json", "failure_counts.json"])
-    regime_path = find_first_existing(
+    catalog_path = find_first_existing_dynamic(outputs_dir, ["family_catalog.csv", "catalog.csv", "families.csv"])
+    failure_path = find_first_existing_dynamic(outputs_dir, ["failure_taxonomy.json", "failure_counts.json"])
+    regime_path = find_first_existing_dynamic(
         outputs_dir,
         ["regime_survival_table.csv", "regime_survival.csv", "regime_table.csv"],
     )
-    fam_comparison_path = find_first_existing(outputs_dir, ["fam_comparison.md", "family_comparison.md"])
+    fam_comparison_path = find_first_existing_dynamic(outputs_dir, ["fam_comparison.md", "family_comparison.md"])
 
     for p in [
         top5_json_path,
@@ -326,7 +359,7 @@ def main() -> None:
     regime_rows = read_csv(regime_path) if regime_path else []
     fam_comparison_md = read_text(fam_comparison_path) if fam_comparison_path else None
 
-    deep_dive_files = find_all_existing(outputs_dir, ["fam_*_deep_dive.json", "*_deep_dive.json", "deep_dive_*.json"])
+    deep_dive_files = find_all_existing_dynamic(outputs_dir, ["fam_*_deep_dive.json", "*_deep_dive.json", "deep_dive_*.json"])
     for p in deep_dive_files:
         add_available(p)
     fam_0039_path = next((p for p in deep_dive_files if "0039" in p.stem), None)
@@ -338,14 +371,18 @@ def main() -> None:
     fam_0039 = read_json(fam_0039_path) if fam_0039_path else None
     fam_0053 = read_json(fam_0053_path) if fam_0053_path else None
 
-    trade_files: list[str] = []
-    for pattern in [
-        "top5_trade_journals/*.csv",
-        "trade_journals/*.csv",
-        "*trade_journal*.csv",
-        "*journal*.csv",
-    ]:
-        trade_files.extend(str(p) for p in find_all_existing(outputs_dir, [pattern]))
+    trade_files = [
+        str(p)
+        for p in find_all_existing_dynamic(
+            outputs_dir,
+            [
+                "top5_trade_journals/*.csv",
+                "trade_journals/*.csv",
+                "*trade_journal*.csv",
+                "*journal*.csv",
+            ],
+        )
+    ]
     trade_files = sorted(set(trade_files))
     for tf in trade_files:
         add_available(Path(tf))
@@ -471,12 +508,29 @@ def main() -> None:
     hypothesis_counts = Counter(c.get("hypothesis_class", "Unknown") for c in top5_cards)
     diversified = "Diversified" if len(hypothesis_counts) >= 4 else "Concentrated"
 
-    deep_reco = "N/A"
-    deep_reason = "No deep dive files available."
+    def pick_deep_dive_for_family(family_id: str) -> dict[str, Any] | None:
+        if not family_id:
+            return None
+        for p in deep_dive_files:
+            if family_id.lower() in p.stem.lower():
+                payload = read_json(p)
+                if isinstance(payload, dict):
+                    return payload
+        return None
+
+    compare_a = leaderboard[0]["family_id"] if leaderboard else ""
+    compare_b = leaderboard[1]["family_id"] if len(leaderboard) > 1 else ""
+    if compare_a:
+        fam_0039 = pick_deep_dive_for_family(compare_a) or fam_0039
+    if compare_b:
+        fam_0053 = pick_deep_dive_for_family(compare_b) or fam_0053
+
+    deep_reco = compare_a or "N/A"
+    deep_reason = "Based on ranked candidate robustness."
     if fam_0039 and fam_0053:
         s39 = to_float((fam_0039.get("robustness_snapshot") or {}).get("parameter_stability"))
         s53 = to_float((fam_0053.get("robustness_snapshot") or {}).get("parameter_stability"))
-        deep_reco = "FAM_0039" if s39 >= s53 else "FAM_0053"
+        deep_reco = compare_a if s39 >= s53 else compare_b
         deep_reason = f"Selected by higher perturbation stability ({fmt_num(max(s39, s53), 4)})."
     if fam_comparison_md and "Stronger deployment candidate:" in fam_comparison_md:
         for line in fam_comparison_md.splitlines():
@@ -541,6 +595,17 @@ def main() -> None:
                     "robustness_score": to_float(r.get("robustness_score", r.get("robust_score")), 0.0),
                 }
             )
+    if not regime_summary and leaderboard:
+        for r in leaderboard[:10]:
+            regime_summary.append(
+                {
+                    "family_id": r.get("family_id", ""),
+                    "hypothesis_class": r.get("hypothesis_class", ""),
+                    "best_regime": "N/A",
+                    "best_regime_pnl": 0.0,
+                    "robustness_score": to_float(r.get("robust_score"), 0.0),
+                }
+            )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -593,6 +658,19 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     <div class=\"card\"><div class=\"label\">Top / Backup</div><div class=\"kpi\">{safe(top_deploy)} <span class=\"muted\">/</span> {safe(backup)}</div></div>
   </div>
   <p style=\"margin-top:14px\">Current conclusion: Prioritize <b>{safe(top_deploy)}</b> for hardening, keep <b>{safe(backup)}</b> as secondary candidate, and continue strict cost/stability stress before any live transition.</p>
+</section>
+<section class=\"card\" style=\"margin-top:14px\">
+  <h3>Capital Disclosure</h3>
+  <div class=\"grid g4\" style=\"margin-top:8px\">
+    <div><div class=\"label\">Initial capital</div><div class=\"kpi\">10,000 USD</div></div>
+    <div><div class=\"label\">Final equity</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('ending_equity', args.initial_capital), 2)}</div></div>
+    <div><div class=\"label\">Net return %</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('return_pct', 0.0), 2)}%</div></div>
+    <div><div class=\"label\">Sizing model</div><div class=\"kpi\">equity-based</div></div>
+    <div><div class=\"label\">Max leverage</div><div class=\"kpi\">1.0x</div></div>
+    <div><div class=\"label\">Peak leverage used</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('peak_leverage_used', 0.0), 2)}x</div></div>
+    <div><div class=\"label\">Average entry notional</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('average_entry_notional', 0.0), 2)}</div></div>
+    <div><div class=\"label\">Max entry notional</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('max_entry_notional', 0.0), 2)}</div></div>
+  </div>
 </section>
 
 <h2>Section 2 — Top 5 Candidates Overview</h2>
@@ -650,7 +728,7 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     else:
         html_out += "<div class='card'>data not found</div>"
 
-    html_out += "<h2>Section 5 — Deep Dive Comparison (FAM_0039 vs FAM_0053)</h2>"
+    html_out += f"<h2>Section 5 — Deep Dive Comparison ({safe(compare_a or 'N/A')} vs {safe(compare_b or 'N/A')})</h2>"
     if fam_0039 and fam_0053:
         def deep_block(d: dict[str, Any], lbl: str) -> str:
             oos = d.get("oos_report") or {}
@@ -673,8 +751,34 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
   <div class='small' style='margin-top:4px'><b>PnL by regime:</b> {safe(', '.join([f'{k}:{fmt_num(v,0)}' for k,v in reg]) or 'N/A')}</div>
 </div>"""
 
-        html_out += f"<div class='grid g2'>{deep_block(fam_0039, 'FAM_0039')}{deep_block(fam_0053, 'FAM_0053')}</div>"
+        html_out += f"<div class='grid g2'>{deep_block(fam_0039, compare_a or 'Candidate A')}{deep_block(fam_0053, compare_b or 'Candidate B')}</div>"
         html_out += f"<div class='card' style='margin-top:12px'><b>Stronger deployment candidate: {safe(deep_reco)}</b><br><span class='small muted'>{safe(deep_reason)}</span></div>"
+    elif len(leaderboard) >= 2:
+        left = leaderboard[0]
+        right = leaderboard[1]
+        html_out += f"""
+<div class='grid g2'>
+  <div class='card'>
+    <h3>{safe(left['family_id'])} · {safe(left['family_name'])}</h3>
+    <div class='grid g4'>
+      <div><div class='label'>Robust score</div><div>{fmt_num(left['robust_score'],4)}</div></div>
+      <div><div class='label'>Validation PnL</div><div class='{pnl_class(left['validation_pnl'])}'>{fmt_pnl(left['validation_pnl'])}</div></div>
+      <div><div class='label'>OOS PnL</div><div class='{pnl_class(left['oos_pnl'])}'>{fmt_pnl(left['oos_pnl'])}</div></div>
+      <div><div class='label'>Trade count</div><div>{left['trade_count']}</div></div>
+    </div>
+  </div>
+  <div class='card'>
+    <h3>{safe(right['family_id'])} · {safe(right['family_name'])}</h3>
+    <div class='grid g4'>
+      <div><div class='label'>Robust score</div><div>{fmt_num(right['robust_score'],4)}</div></div>
+      <div><div class='label'>Validation PnL</div><div class='{pnl_class(right['validation_pnl'])}'>{fmt_pnl(right['validation_pnl'])}</div></div>
+      <div><div class='label'>OOS PnL</div><div class='{pnl_class(right['oos_pnl'])}'>{fmt_pnl(right['oos_pnl'])}</div></div>
+      <div><div class='label'>Trade count</div><div>{right['trade_count']}</div></div>
+    </div>
+  </div>
+</div>
+<div class='card' style='margin-top:12px'><b>Stronger deployment candidate: {safe(deep_reco)}</b><br><span class='small muted'>Fallback comparison from ranked leaderboard (deep dive artifacts not present).</span></div>
+"""
     else:
         html_out += "<div class='card'>data not found</div>"
 
@@ -715,6 +819,8 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
             pct = 100 * v / total_fails
             html_out += f"<div style='margin-top:8px'><div class='small'>{safe(k)} · {v}</div><div class='bar'><span style='width:{pct:.1f}%'></span></div></div>"
         html_out += "<p class='small' style='margin-top:10px'>Most frequent failure modes are shown above. Cross-class failure analysis can be expanded by joining taxonomy labels with hypothesis_class in future runs.</p></div>"
+    elif catalog_rows:
+        html_out += "<div class='card'><p class='small'>No explicit failures recorded in catalog; all listed candidates appear to have passed current filters.</p></div>"
     else:
         html_out += "<div class='card'>data not found</div>"
 
