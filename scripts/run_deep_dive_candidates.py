@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from scripts.output_contract import ensure_artifacts_in_output_dir, normalize_cli_path_arg
 from scripts.run_strategy_factory import maybe_make_sample
-from scripts.output_contract import ensure_artifacts_in_output_dir
 from src.family_evaluator import CostModel, backtest_family, prepare_features, split_dataset
 from src.family_generator import generate_strategy_families
 from src.ranking import rank_candidates
@@ -111,8 +111,8 @@ def _deep_dive_for_family(fam, splits: dict[str, list[dict]], base_cost: CostMod
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run deep-dive workflows for shortlisted candidate families")
-    parser.add_argument("--csv", type=Path, required=True)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
+    parser.add_argument("--csv", type=str, required=True)
+    parser.add_argument("--output-dir", type=str, default="outputs")
     parser.add_argument("--n-families", type=int, default=120)
     parser.add_argument("--min-trades", type=int, default=20)
     parser.add_argument("--min-trades-alt", type=int, default=30)
@@ -120,13 +120,15 @@ def main() -> None:
     parser.add_argument("--build-sample-if-missing", action="store_true")
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     args = parser.parse_args()
+    csv_path = normalize_cli_path_arg(args.csv)
+    output_dir = normalize_cli_path_arg(args.output_dir)
 
     if args.build_sample_if_missing:
-        maybe_make_sample(args.csv, rows=args.sample_rows)
+        maybe_make_sample(csv_path, rows=args.sample_rows)
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    data = prepare_features(_read_csv_rows(args.csv))
+    data = prepare_features(_read_csv_rows(csv_path))
     splits = split_dataset(data)
     families = generate_strategy_families(args.n_families)
     fam_lookup = {f.family_id: f for f in families}
@@ -170,8 +172,8 @@ def main() -> None:
         fam = fam_lookup[fam_id]
         deep_dives[fam_id] = _deep_dive_for_family(fam, splits, base_cost, initial_capital=args.initial_capital)
 
-    (args.output_dir / "fam_0053_deep_dive.json").write_text(json.dumps(deep_dives["FAM_0053"], indent=2), encoding="utf-8")
-    (args.output_dir / "fam_0039_deep_dive.json").write_text(json.dumps(deep_dives["FAM_0039"], indent=2), encoding="utf-8")
+    (output_dir / "fam_0053_deep_dive.json").write_text(json.dumps(deep_dives["FAM_0053"], indent=2), encoding="utf-8")
+    (output_dir / "fam_0039_deep_dive.json").write_text(json.dumps(deep_dives["FAM_0039"], indent=2), encoding="utf-8")
 
     score_0053 = next((r["robustness_score"] for r in ranked_20 if r["family_id"] == "FAM_0053"), float("-inf"))
     score_0039 = next((r["robustness_score"] for r in ranked_20 if r["family_id"] == "FAM_0039"), float("-inf"))
@@ -194,9 +196,9 @@ def main() -> None:
         "",
         "Decision basis: higher robustness score under the stricter trade-count discipline (min_trades=20) while both families remain in-scope for deep dive.",
     ]
-    (args.output_dir / "fam_comparison.md").write_text("\n".join(lines), encoding="utf-8")
+    (output_dir / "fam_comparison.md").write_text("\n".join(lines), encoding="utf-8")
     moved = ensure_artifacts_in_output_dir(
-        args.output_dir,
+        output_dir,
         [
             "fam_0039_deep_dive.json",
             "fam_0053_deep_dive.json",
