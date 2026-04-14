@@ -74,9 +74,9 @@ def test_notional_cap_limits_leverage() -> None:
 
     assert len(trades) == 1
     trade = trades[0]
-    # Tiny stop implies huge risk-based qty, so cap should bind at 2x initial capital.
-    assert abs(trade["entry_notional"] - 20_000.0) < 1e-6
-    assert trade["leverage_used"] <= 2.0 + 1e-9
+    # Tiny stop implies huge risk-based qty, so cap should bind at 1x initial capital.
+    assert abs(trade["entry_notional"] - 10_000.0) < 1e-6
+    assert trade["leverage_used"] <= 1.0 + 1e-9
 
 
 def test_invalid_sizing_inputs_skip_trade() -> None:
