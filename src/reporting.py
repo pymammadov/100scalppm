@@ -9,6 +9,7 @@ from .family_definitions import StrategyFamily
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
         path.write_text("", encoding="utf-8")
         return
@@ -92,7 +93,10 @@ def write_summary(
     failure_counts: dict[str, int],
     regime_survival: list[dict[str, Any]],
     initial_capital: float,
+    min_trades: int | None = None,
+    candidates_passing_filters: int | None = None,
 ) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Strategy Factory Summary",
         f"- Families generated: {n_generated}",
@@ -106,4 +110,14 @@ def write_summary(
     for k, v in failure_counts.items():
         lines.append(f"  - {k}: {v}")
     (output_dir / "strategy_factory_summary.md").write_text("\n".join(lines), encoding="utf-8")
+    summary_payload = {
+        "families_generated": n_generated,
+        "families_evaluated": n_evaluated,
+        "initial_capital_usd": initial_capital,
+        "hypothesis_class_counts": class_counts,
+        "failure_taxonomy": failure_counts,
+        "min_trades": min_trades,
+        "candidates_passing_filters": candidates_passing_filters,
+    }
+    (output_dir / "strategy_factory_summary.json").write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
     write_csv(output_dir / "regime_survival_table.csv", regime_survival)
