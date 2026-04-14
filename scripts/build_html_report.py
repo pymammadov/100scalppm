@@ -110,6 +110,8 @@ def compute_trade_journal_stats(rows: list[dict[str, str]], initial_capital: flo
             "slippage": 0.0,
             "avg_pnl": 0.0,
             "peak_leverage_used": 0.0,
+            "average_entry_notional": 0.0,
+            "max_entry_notional": 0.0,
             "profit_factor": 0.0,
         }
     net = sum(to_float(r.get("net_pnl")) for r in rows)
@@ -120,6 +122,7 @@ def compute_trade_journal_stats(rows: list[dict[str, str]], initial_capital: flo
     gross_wins = sum(to_float(r.get("net_pnl")) for r in rows if to_float(r.get("net_pnl")) > 0)
     gross_losses = sum(to_float(r.get("net_pnl")) for r in rows if to_float(r.get("net_pnl")) < 0)
     peak_leverage_used = max(to_float(r.get("leverage_used_or_gross_exposure", r.get("leverage_used"))) for r in rows)
+    entry_notionals = [to_float(r.get("entry_notional")) for r in rows]
     eq = initial_capital
     peak = initial_capital
     mdd_pct = 0.0
@@ -141,6 +144,8 @@ def compute_trade_journal_stats(rows: list[dict[str, str]], initial_capital: flo
         "slippage": slippage,
         "avg_pnl": net / n if n else 0.0,
         "peak_leverage_used": peak_leverage_used,
+        "average_entry_notional": (sum(entry_notionals) / n) if n else 0.0,
+        "max_entry_notional": max(entry_notionals) if entry_notionals else 0.0,
         "profit_factor": (gross_wins / abs(gross_losses)) if gross_losses < 0 else (gross_wins if gross_wins > 0 else 0.0),
     }
 
@@ -444,13 +449,15 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     <div class=\"card\"><div class=\"label\">Families tested</div><div class=\"kpi\">{safe(families_tested or 'data not found')}</div></div>
     <div class=\"card\"><div class=\"label\">Candidates passing filters</div><div class=\"kpi\">{safe(candidates_passing or 'data not found')}</div></div>
     <div class=\"card\"><div class=\"label\">Min trades threshold</div><div class=\"kpi\">{safe(min_trades or 'data not found')}</div></div>
-    <div class=\"card\"><div class=\"label\">Initial capital (USD)</div><div class=\"kpi\">{fmt_num(args.initial_capital, 2)}</div></div>
+    <div class=\"card\"><div class=\"label\">Initial capital</div><div class=\"kpi\">{fmt_num(args.initial_capital, 2)} USD</div></div>
     <div class=\"card\"><div class=\"label\">Risk per trade</div><div class=\"kpi\">{fmt_num((to_float((top5_cards[0] if top5_cards else {}).get('risk_per_trade_pct', 0.1), 0.1)), 2)}%</div></div>
-    <div class=\"card\"><div class=\"label\">Max leverage</div><div class=\"kpi\">{fmt_num(to_float((top5_cards[0] if top5_cards else {}).get('max_leverage', 2.0), 2.0), 2)}x</div></div>
+    <div class=\"card\"><div class=\"label\">Max leverage</div><div class=\"kpi\">1.00x</div></div>
     <div class=\"card\"><div class=\"label\">Sizing model</div><div class=\"kpi\">equity-based</div></div>
     <div class=\"card\"><div class=\"label\">Peak leverage used</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('peak_leverage_used', 0.0), 2)}x</div></div>
     <div class=\"card\"><div class=\"label\">Final equity</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('ending_equity', args.initial_capital), 2)}</div></div>
     <div class=\"card\"><div class=\"label\">Net return %</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('return_pct', 0.0), 2)}%</div></div>
+    <div class=\"card\"><div class=\"label\">Average entry notional</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('average_entry_notional', 0.0), 2)}</div></div>
+    <div class=\"card\"><div class=\"label\">Max entry notional</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('max_entry_notional', 0.0), 2)}</div></div>
     <div class=\"card\"><div class=\"label\">Max drawdown %</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('max_drawdown_pct', 0.0), 2)}%</div></div>
     <div class=\"card\"><div class=\"label\">Top / Backup</div><div class=\"kpi\">{safe(top_deploy)} <span class=\"muted\">/</span> {safe(backup)}</div></div>
   </div>
@@ -560,11 +567,11 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     <div><div class='label'>Slippage</div><div class='{pnl_class(-s['slippage'])}'>{fmt_pnl(s['slippage'])}</div></div>
     <div><div class='label'>Avg PnL/trade</div><div class='{pnl_class(s['avg_pnl'])}'>{fmt_pnl(s['avg_pnl'])}</div></div>
   </div>
-  <div class='table-wrap' style='margin-top:10px'><table><thead><tr><th>entry</th><th>exit</th><th>side</th><th>qty</th><th>entry_notional</th><th>net_pnl</th><th>fees</th><th>regime</th></tr></thead><tbody>
+  <div class='table-wrap' style='margin-top:10px'><table><thead><tr><th>entry</th><th>exit</th><th>side</th><th>qty</th><th>entry_notional</th><th>leverage_used</th><th>starting_equity_before_trade</th><th>ending_equity_after_trade</th><th>net_pnl</th><th>fees</th><th>regime</th></tr></thead><tbody>
 """
             for r in t["preview"][:5]:
                 rg = f"{r.get('trend_regime','')}/{r.get('vol_regime','')}"
-                html_out += f"<tr><td>{safe(r.get('timestamp_entry'))}</td><td>{safe(r.get('timestamp_exit'))}</td><td>{safe(r.get('side'))}</td><td>{fmt_num(r.get('quantity', r.get('qty')), 6)}</td><td>{fmt_pnl(r.get('entry_notional'))}</td><td class='{pnl_class(r.get('net_pnl'))}'>{fmt_pnl(r.get('net_pnl'))}</td><td>{fmt_pnl(r.get('fees'))}</td><td>{safe(rg)}</td></tr>"
+                html_out += f"<tr><td>{safe(r.get('timestamp_entry'))}</td><td>{safe(r.get('timestamp_exit'))}</td><td>{safe(r.get('side'))}</td><td>{fmt_num(r.get('quantity', r.get('qty')), 6)}</td><td>{fmt_pnl(r.get('entry_notional'))}</td><td>{fmt_num(r.get('leverage_used_or_gross_exposure', r.get('leverage_used')), 4)}x</td><td>{fmt_pnl(r.get('starting_equity_before_trade', r.get('equity_before')))}</td><td>{fmt_pnl(r.get('ending_equity_after_trade', r.get('equity_after')))}</td><td class='{pnl_class(r.get('net_pnl'))}'>{fmt_pnl(r.get('net_pnl'))}</td><td>{fmt_pnl(r.get('fees'))}</td><td>{safe(rg)}</td></tr>"
             html_out += "</tbody></table></div></div>"
     else:
         html_out += "<div class='card'>data not found</div>"
