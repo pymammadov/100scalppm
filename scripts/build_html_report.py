@@ -109,12 +109,17 @@ def compute_trade_journal_stats(rows: list[dict[str, str]], initial_capital: flo
             "fees": 0.0,
             "slippage": 0.0,
             "avg_pnl": 0.0,
+            "peak_leverage_used": 0.0,
+            "profit_factor": 0.0,
         }
     net = sum(to_float(r.get("net_pnl")) for r in rows)
     gross = sum(to_float(r.get("gross_pnl")) for r in rows)
     fees = sum(to_float(r.get("fees")) for r in rows)
     slippage = sum(to_float(r.get("slippage_cost")) for r in rows)
     wins = sum(1 for r in rows if to_float(r.get("net_pnl")) > 0)
+    gross_wins = sum(to_float(r.get("net_pnl")) for r in rows if to_float(r.get("net_pnl")) > 0)
+    gross_losses = sum(to_float(r.get("net_pnl")) for r in rows if to_float(r.get("net_pnl")) < 0)
+    peak_leverage_used = max(to_float(r.get("leverage_used_or_gross_exposure", r.get("leverage_used"))) for r in rows)
     eq = initial_capital
     peak = initial_capital
     mdd_pct = 0.0
@@ -135,6 +140,8 @@ def compute_trade_journal_stats(rows: list[dict[str, str]], initial_capital: flo
         "fees": fees,
         "slippage": slippage,
         "avg_pnl": net / n if n else 0.0,
+        "peak_leverage_used": peak_leverage_used,
+        "profit_factor": (gross_wins / abs(gross_losses)) if gross_losses < 0 else (gross_wins if gross_wins > 0 else 0.0),
     }
 
 
@@ -257,8 +264,12 @@ def main() -> None:
 
     trade_files = sorted(glob.glob(str(outputs_dir / "top5_trade_journals" / "*.csv")))
     for tf in trade_files:
-        rel = Path(tf).relative_to(ROOT)
-        available_files.append(str(rel).replace("\\", "/"))
+        p = Path(tf)
+        try:
+            rel = p.relative_to(ROOT)
+            available_files.append(str(rel).replace("\\", "/"))
+        except ValueError:
+            available_files.append(str(p))
 
     families_tested = None
     candidates_passing = None
@@ -314,6 +325,7 @@ def main() -> None:
         )
     top5_cards = []
     for i, row in enumerate(leaderboard[:5], start=1):
+        source = next((r for r in ranked_rows if r.get("family_id") == row["family_id"]), {})
         top5_cards.append(
             {
                 "rank": i,
@@ -325,6 +337,8 @@ def main() -> None:
                 "validation_pnl": row["validation_pnl"],
                 "oos_pnl": row["oos_pnl"],
                 "trade_count": row["trade_count"],
+                "risk_per_trade_pct": to_float(source.get("risk_per_trade_pct", 0.1), 0.1),
+                "max_leverage": to_float(source.get("max_leverage", 2.0), 2.0),
                 "rationale": (
                     f"Robust score={row['robust_score']:.4f} (normalized ranking score), "
                     f"parameter_stability_raw={row['parameter_stability_raw']:.4f}, "
@@ -370,6 +384,7 @@ def main() -> None:
         stats = compute_trade_journal_stats(rows, initial_capital=args.initial_capital)
         preview = rows[:8]
         trade_summaries.append({"file": p.name, "stats": stats, "preview": preview})
+    primary_trade_stats = trade_summaries[0]["stats"] if trade_summaries else None
 
     failure_items = []
     if isinstance(failure_taxonomy, dict):
@@ -429,7 +444,14 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     <div class=\"card\"><div class=\"label\">Families tested</div><div class=\"kpi\">{safe(families_tested or 'data not found')}</div></div>
     <div class=\"card\"><div class=\"label\">Candidates passing filters</div><div class=\"kpi\">{safe(candidates_passing or 'data not found')}</div></div>
     <div class=\"card\"><div class=\"label\">Min trades threshold</div><div class=\"kpi\">{safe(min_trades or 'data not found')}</div></div>
-    <div class=\"card\"><div class=\"label\">Starting capital (USD)</div><div class=\"kpi\">{fmt_num(args.initial_capital, 2)}</div></div>
+    <div class=\"card\"><div class=\"label\">Initial capital (USD)</div><div class=\"kpi\">{fmt_num(args.initial_capital, 2)}</div></div>
+    <div class=\"card\"><div class=\"label\">Risk per trade</div><div class=\"kpi\">{fmt_num((to_float((top5_cards[0] if top5_cards else {}).get('risk_per_trade_pct', 0.1), 0.1)), 2)}%</div></div>
+    <div class=\"card\"><div class=\"label\">Max leverage</div><div class=\"kpi\">{fmt_num(to_float((top5_cards[0] if top5_cards else {}).get('max_leverage', 2.0), 2.0), 2)}x</div></div>
+    <div class=\"card\"><div class=\"label\">Sizing model</div><div class=\"kpi\">equity-based</div></div>
+    <div class=\"card\"><div class=\"label\">Peak leverage used</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('peak_leverage_used', 0.0), 2)}x</div></div>
+    <div class=\"card\"><div class=\"label\">Final equity</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('ending_equity', args.initial_capital), 2)}</div></div>
+    <div class=\"card\"><div class=\"label\">Net return %</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('return_pct', 0.0), 2)}%</div></div>
+    <div class=\"card\"><div class=\"label\">Max drawdown %</div><div class=\"kpi\">{fmt_num((primary_trade_stats or {}).get('max_drawdown_pct', 0.0), 2)}%</div></div>
     <div class=\"card\"><div class=\"label\">Top / Backup</div><div class=\"kpi\">{safe(top_deploy)} <span class=\"muted\">/</span> {safe(backup)}</div></div>
   </div>
   <p style=\"margin-top:14px\">Current conclusion: Prioritize <b>{safe(top_deploy)}</b> for hardening, keep <b>{safe(backup)}</b> as secondary candidate, and continue strict cost/stability stress before any live transition.</p>
@@ -538,11 +560,11 @@ footer{{margin:28px 0 8px;color:var(--muted);font-size:12px}}
     <div><div class='label'>Slippage</div><div class='{pnl_class(-s['slippage'])}'>{fmt_pnl(s['slippage'])}</div></div>
     <div><div class='label'>Avg PnL/trade</div><div class='{pnl_class(s['avg_pnl'])}'>{fmt_pnl(s['avg_pnl'])}</div></div>
   </div>
-  <div class='table-wrap' style='margin-top:10px'><table><thead><tr><th>entry</th><th>exit</th><th>side</th><th>net_pnl</th><th>fees</th><th>regime</th></tr></thead><tbody>
+  <div class='table-wrap' style='margin-top:10px'><table><thead><tr><th>entry</th><th>exit</th><th>side</th><th>qty</th><th>entry_notional</th><th>net_pnl</th><th>fees</th><th>regime</th></tr></thead><tbody>
 """
             for r in t["preview"][:5]:
                 rg = f"{r.get('trend_regime','')}/{r.get('vol_regime','')}"
-                html_out += f"<tr><td>{safe(r.get('timestamp_entry'))}</td><td>{safe(r.get('timestamp_exit'))}</td><td>{safe(r.get('side'))}</td><td class='{pnl_class(r.get('net_pnl'))}'>{fmt_pnl(r.get('net_pnl'))}</td><td>{fmt_pnl(r.get('fees'))}</td><td>{safe(rg)}</td></tr>"
+                html_out += f"<tr><td>{safe(r.get('timestamp_entry'))}</td><td>{safe(r.get('timestamp_exit'))}</td><td>{safe(r.get('side'))}</td><td>{fmt_num(r.get('quantity', r.get('qty')), 6)}</td><td>{fmt_pnl(r.get('entry_notional'))}</td><td class='{pnl_class(r.get('net_pnl'))}'>{fmt_pnl(r.get('net_pnl'))}</td><td>{fmt_pnl(r.get('fees'))}</td><td>{safe(rg)}</td></tr>"
             html_out += "</tbody></table></div></div>"
     else:
         html_out += "<div class='card'>data not found</div>"
