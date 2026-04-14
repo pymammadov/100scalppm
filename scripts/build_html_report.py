@@ -279,12 +279,12 @@ def main() -> None:
     from src.ranking import rank_candidates
 
     parser = argparse.ArgumentParser(description="Build strategy factory HTML report")
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
+    parser.add_argument("--output-dir", default="outputs")
     parser.add_argument("--out-file", type=Path, default=None)
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     args = parser.parse_args()
 
-    outdir = Path(args.output_dir).expanduser().resolve()
+    outdir = Path(args.output_dir).expanduser()
     if args.out_file is None:
         out_file = outdir / "strategy_factory_report.html"
     else:
