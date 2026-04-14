@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-from scripts.output_contract import ensure_artifacts_in_output_dir
+from scripts.output_contract import ensure_artifacts_in_output_dir, normalize_cli_path_arg
 from src.strategy_factory import run_strategy_factory
 
 
@@ -46,26 +46,28 @@ def maybe_make_sample(csv_path: Path, rows: int = 6000) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run open strategy factory discovery pipeline")
-    parser.add_argument("--csv", type=Path, required=True, help="Path to BTCUSDT 1m OHLCV CSV")
+    parser.add_argument("--csv", type=str, required=True, help="Path to BTCUSDT 1m OHLCV CSV")
     parser.add_argument("--n-families", type=int, default=120)
     parser.add_argument("--min-trades", type=int, default=20)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
+    parser.add_argument("--output-dir", type=str, default="outputs")
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     parser.add_argument("--build-sample-if-missing", action="store_true")
     args = parser.parse_args()
+    csv_path = normalize_cli_path_arg(args.csv)
+    output_dir = normalize_cli_path_arg(args.output_dir)
 
     if args.build_sample_if_missing:
-        maybe_make_sample(args.csv)
+        maybe_make_sample(csv_path)
 
     result = run_strategy_factory(
-        args.csv,
+        csv_path,
         args.n_families,
-        args.output_dir,
+        output_dir,
         min_trades=args.min_trades,
         initial_capital=args.initial_capital,
     )
     moved = ensure_artifacts_in_output_dir(
-        args.output_dir,
+        output_dir,
         [
             "top5_strategies.json",
             "top5_strategies.md",

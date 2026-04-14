@@ -4,7 +4,6 @@ import argparse
 import csv
 import html
 import json
-import os
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -14,6 +13,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
+from scripts.output_contract import normalize_cli_path_arg
 
 
 def read_json(path: Path) -> Any | None:
@@ -86,14 +86,6 @@ def find_all_existing_dynamic(outputs_dir: Path, patterns: list[str]) -> list[Pa
                 found.append(p)
                 seen.add(key)
     return found
-
-
-def normalize_cli_path_arg(path_value: str) -> Path:
-    """Normalize CLI path values so Windows-style separators also work on POSIX shells."""
-    cleaned = path_value.strip().strip("\"'")
-    if os.sep == "/":
-        cleaned = cleaned.replace("\\", "/")
-    return Path(cleaned).expanduser()
 
 
 def rel_output_path(path: Path) -> str:

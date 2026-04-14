@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -24,3 +25,24 @@ def ensure_artifacts_in_output_dir(output_dir: Path, artifact_paths: list[str], 
             moved.append(target)
 
     return moved
+
+
+def normalize_cli_path_arg(path_value: str) -> Path:
+    """
+    Normalize CLI path values so Windows-style separators also work on POSIX shells.
+
+    Notes:
+    - If a user passes `outputs\\spot_15m` in bash without quoting, the shell strips
+      backslashes and argparse receives `outputsspot_15m`.
+    - We apply conservative heuristics for the known project path roots (`outputs`,
+      `data`) to recover expected paths in those cases.
+    """
+    cleaned = path_value.strip().strip("\"'")
+    if os.sep == "/":
+        cleaned = cleaned.replace("\\", "/")
+        if "/" not in cleaned:
+            if cleaned.startswith("outputs") and cleaned != "outputs":
+                cleaned = f"outputs/{cleaned[len('outputs') :]}"
+            elif cleaned.startswith("datasamples") and cleaned != "datasamples":
+                cleaned = f"data/samples/{cleaned[len('datasamples') :]}"
+    return Path(cleaned).expanduser()

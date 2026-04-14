@@ -87,7 +87,7 @@ def run_strategy_factory(
                 "hypothesis_class": fam.hypothesis_class,
                 "initial_capital_usd": initial_capital,
                 "risk_per_trade_pct": fam.parameters.get("risk_per_trade", 0.0) * 100.0,
-                "max_leverage": 2.0,
+                "max_leverage": 1.0,
                 "sizing_model": "equity-based",
                 "starting_capital": split_metrics["oos"]["starting_capital"],
                 "ending_equity": split_metrics["oos"]["ending_equity"],
