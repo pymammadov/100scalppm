@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT))
-from src.ranking import rank_candidates
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 
 def read_json(path: Path) -> Any | None:
@@ -276,14 +276,20 @@ def normalize_robust_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
 
 
 def main() -> None:
+    from src.ranking import rank_candidates
+
     parser = argparse.ArgumentParser(description="Build strategy factory HTML report")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs")
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     parser.add_argument("--out-file", type=Path, default=None)
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     args = parser.parse_args()
 
-    outputs_dir = args.output_dir
-    out_file = args.out_file or (outputs_dir / "strategy_factory_report.html")
+    outdir = Path(args.output_dir).expanduser().resolve()
+    if args.out_file is None:
+        out_file = outdir / "strategy_factory_report.html"
+    else:
+        out_file_arg = Path(args.out_file).expanduser()
+        out_file = out_file_arg if out_file_arg.is_absolute() else (outdir / out_file_arg)
 
     available_files: list[str] = []
     seen_available: set[str] = set()
@@ -296,18 +302,18 @@ def main() -> None:
             available_files.append(rel)
             seen_available.add(rel)
 
-    top5_json_path = find_first_existing_dynamic(outputs_dir, ["top5_strategies.json", "top_strategies.json"])
-    top5_md_path = find_first_existing_dynamic(outputs_dir, ["top5_strategies.md", "top_strategies.md"])
+    top5_json_path = find_first_existing_dynamic(outdir, ["top5_strategies.json", "top_strategies.json"])
+    top5_md_path = find_first_existing_dynamic(outdir, ["top5_strategies.md", "top_strategies.md"])
     sf_summary_json_path = find_first_existing_dynamic(
-        outputs_dir,
+        outdir,
         ["strategy_factory_summary.json", "summary.json", "factory_summary.json"],
     )
     sf_summary_md_path = find_first_existing_dynamic(
-        outputs_dir,
+        outdir,
         ["strategy_factory_summary.md", "summary.md", "factory_summary.md"],
     )
     backtest_path = find_first_existing_dynamic(
-        outputs_dir,
+        outdir,
         [
             "family_backtest_results.csv",
             "backtest_results.csv",
@@ -316,7 +322,7 @@ def main() -> None:
         ],
     )
     robust_path = find_first_existing_dynamic(
-        outputs_dir,
+        outdir,
         [
             "family_robustness_results.csv",
             "robustness_results.csv",
@@ -324,13 +330,13 @@ def main() -> None:
             "*robust*.csv",
         ],
     )
-    catalog_path = find_first_existing_dynamic(outputs_dir, ["family_catalog.csv", "catalog.csv", "families.csv"])
-    failure_path = find_first_existing_dynamic(outputs_dir, ["failure_taxonomy.json", "failure_counts.json"])
+    catalog_path = find_first_existing_dynamic(outdir, ["family_catalog.csv", "catalog.csv", "families.csv"])
+    failure_path = find_first_existing_dynamic(outdir, ["failure_taxonomy.json", "failure_counts.json"])
     regime_path = find_first_existing_dynamic(
-        outputs_dir,
+        outdir,
         ["regime_survival_table.csv", "regime_survival.csv", "regime_table.csv"],
     )
-    fam_comparison_path = find_first_existing_dynamic(outputs_dir, ["fam_comparison.md", "family_comparison.md"])
+    fam_comparison_path = find_first_existing_dynamic(outdir, ["fam_comparison.md", "family_comparison.md"])
 
     for p in [
         top5_json_path,
@@ -349,7 +355,6 @@ def main() -> None:
     top5_json = read_json(top5_json_path) if top5_json_path else []
     if not isinstance(top5_json, list):
         top5_json = []
-    top5_md = read_text(top5_md_path) if top5_md_path else None
     sf_summary_json = read_json(sf_summary_json_path) if sf_summary_json_path else None
     sf_summary_md = read_text(sf_summary_md_path) if sf_summary_md_path else None
     backtest_rows = read_csv(backtest_path) if backtest_path else []
@@ -359,7 +364,7 @@ def main() -> None:
     regime_rows = read_csv(regime_path) if regime_path else []
     fam_comparison_md = read_text(fam_comparison_path) if fam_comparison_path else None
 
-    deep_dive_files = find_all_existing_dynamic(outputs_dir, ["fam_*_deep_dive.json", "*_deep_dive.json", "deep_dive_*.json"])
+    deep_dive_files = find_all_existing_dynamic(outdir, ["fam_*_deep_dive.json", "*_deep_dive.json", "deep_dive_*.json"])
     for p in deep_dive_files:
         add_available(p)
     fam_0039_path = next((p for p in deep_dive_files if "0039" in p.stem), None)
@@ -374,7 +379,7 @@ def main() -> None:
     trade_files = [
         str(p)
         for p in find_all_existing_dynamic(
-            outputs_dir,
+            outdir,
             [
                 "top5_trade_journals/*.csv",
                 "trade_journals/*.csv",
@@ -419,10 +424,6 @@ def main() -> None:
 
     numeric_backtest_rows = normalize_backtest_rows(backtest_rows)
     numeric_robust_rows = normalize_robust_rows(robust_rows)
-    robust_map = {r.get("family_id", ""): r for r in numeric_robust_rows}
-    backtest_map = {r.get("family_id", ""): r for r in numeric_backtest_rows}
-    catalog_map = {r.get("family_id", ""): r for r in catalog_rows}
-
     ranking_min_trades = parse_min_trades(min_trades, default=20)
     ranked_rows = rank_candidates(numeric_backtest_rows, numeric_robust_rows, min_trades=ranking_min_trades)
 
@@ -882,9 +883,10 @@ function sortTable(n){
 </body></html>
 """
 
-    outputs_dir.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(html_out, encoding="utf-8")
-    print(str(out_file.as_posix()))
+    print(str(out_file.resolve().as_posix()))
     print("USED_SOURCES:")
     for src in available_files:
         print(src)
