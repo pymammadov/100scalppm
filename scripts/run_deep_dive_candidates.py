@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from scripts.run_strategy_factory import maybe_make_sample
+from scripts.output_contract import ensure_artifacts_in_output_dir
 from src.family_evaluator import CostModel, backtest_family, prepare_features, split_dataset
 from src.family_generator import generate_strategy_families
 from src.ranking import rank_candidates
@@ -194,6 +195,16 @@ def main() -> None:
         "Decision basis: higher robustness score under the stricter trade-count discipline (min_trades=20) while both families remain in-scope for deep dive.",
     ]
     (args.output_dir / "fam_comparison.md").write_text("\n".join(lines), encoding="utf-8")
+    moved = ensure_artifacts_in_output_dir(
+        args.output_dir,
+        [
+            "fam_0039_deep_dive.json",
+            "fam_0053_deep_dive.json",
+            "fam_comparison.md",
+        ],
+    )
+    if moved:
+        print("Relocated legacy artifacts into --output-dir:", [str(p) for p in moved])
 
     print(f"Deep dive complete. Stronger candidate: {stronger}")
 
