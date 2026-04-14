@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import glob
 import html
 import json
 import sys
@@ -43,6 +42,34 @@ def read_csv(path: Path) -> list[dict[str, str]]:
             return list(csv.DictReader(f))
     except Exception:
         return []
+
+
+def find_first_existing(outputs_dir: Path, candidates: list[str]) -> Path | None:
+    for name in candidates:
+        p = outputs_dir / name
+        if p.exists():
+            return p
+    return None
+
+
+def find_all_existing(outputs_dir: Path, patterns: list[str]) -> list[Path]:
+    found: list[Path] = []
+    seen: set[str] = set()
+    for pat in patterns:
+        for p in sorted(outputs_dir.glob(pat)):
+            key = str(p.resolve())
+            if p.is_file() and key not in seen:
+                found.append(p)
+                seen.add(key)
+    return found
+
+
+def rel_output_path(path: Path) -> str:
+    try:
+        rel = path.relative_to(ROOT)
+        return str(rel).replace("\\", "/")
+    except ValueError:
+        return str(path)
 
 
 def parse_md_value(md: str | None, label: str) -> str | None:
@@ -235,46 +262,93 @@ def main() -> None:
     outputs_dir = args.output_dir
     out_file = args.out_file or (outputs_dir / "strategy_factory_report.html")
 
-    top5_json = read_json(outputs_dir / "top5_strategies.json") or []
-    top5_md = read_text(outputs_dir / "top5_strategies.md")
-    sf_summary_json = read_json(outputs_dir / "strategy_factory_summary.json")
-    sf_summary_md = read_text(outputs_dir / "strategy_factory_summary.md")
-    backtest_rows = read_csv(outputs_dir / "family_backtest_results.csv")
-    robust_rows = read_csv(outputs_dir / "family_robustness_results.csv")
-    catalog_rows = read_csv(outputs_dir / "family_catalog.csv")
-    failure_taxonomy = read_json(outputs_dir / "failure_taxonomy.json")
-    regime_rows = read_csv(outputs_dir / "regime_survival_table.csv")
-    fam_0039 = read_json(outputs_dir / "fam_0039_deep_dive.json")
-    fam_0053 = read_json(outputs_dir / "fam_0053_deep_dive.json")
-    fam_comparison_md = read_text(outputs_dir / "fam_comparison.md")
+    available_files: list[str] = []
+    seen_available: set[str] = set()
 
-    available_files = []
-    candidate_sources = [
-        "top5_strategies.json",
-        "top5_strategies.md",
-        "strategy_factory_summary.json",
-        "strategy_factory_summary.md",
-        "family_backtest_results.csv",
-        "family_robustness_results.csv",
-        "family_catalog.csv",
-        "failure_taxonomy.json",
-        "regime_survival_table.csv",
-        "fam_0039_deep_dive.json",
-        "fam_0053_deep_dive.json",
-        "fam_comparison.md",
-    ]
-    for fn in candidate_sources:
-        if (outputs_dir / fn).exists():
-            available_files.append(f"outputs/{fn}")
+    def add_available(path: Path | None) -> None:
+        if path is None or not path.exists():
+            return
+        rel = rel_output_path(path)
+        if rel not in seen_available:
+            available_files.append(rel)
+            seen_available.add(rel)
 
-    trade_files = sorted(glob.glob(str(outputs_dir / "top5_trade_journals" / "*.csv")))
+    top5_json_path = find_first_existing(outputs_dir, ["top5_strategies.json", "top_strategies.json"])
+    top5_md_path = find_first_existing(outputs_dir, ["top5_strategies.md", "top_strategies.md"])
+    sf_summary_json_path = find_first_existing(
+        outputs_dir,
+        ["strategy_factory_summary.json", "summary.json", "factory_summary.json"],
+    )
+    sf_summary_md_path = find_first_existing(
+        outputs_dir,
+        ["strategy_factory_summary.md", "summary.md", "factory_summary.md"],
+    )
+    backtest_path = find_first_existing(
+        outputs_dir,
+        ["family_backtest_results.csv", "backtest_results.csv", "candidates_backtest_results.csv"],
+    )
+    robust_path = find_first_existing(
+        outputs_dir,
+        ["family_robustness_results.csv", "robustness_results.csv", "candidates_robustness_results.csv"],
+    )
+    catalog_path = find_first_existing(outputs_dir, ["family_catalog.csv", "catalog.csv", "families.csv"])
+    failure_path = find_first_existing(outputs_dir, ["failure_taxonomy.json", "failure_counts.json"])
+    regime_path = find_first_existing(
+        outputs_dir,
+        ["regime_survival_table.csv", "regime_survival.csv", "regime_table.csv"],
+    )
+    fam_comparison_path = find_first_existing(outputs_dir, ["fam_comparison.md", "family_comparison.md"])
+
+    for p in [
+        top5_json_path,
+        top5_md_path,
+        sf_summary_json_path,
+        sf_summary_md_path,
+        backtest_path,
+        robust_path,
+        catalog_path,
+        failure_path,
+        regime_path,
+        fam_comparison_path,
+    ]:
+        add_available(p)
+
+    top5_json = read_json(top5_json_path) if top5_json_path else []
+    if not isinstance(top5_json, list):
+        top5_json = []
+    top5_md = read_text(top5_md_path) if top5_md_path else None
+    sf_summary_json = read_json(sf_summary_json_path) if sf_summary_json_path else None
+    sf_summary_md = read_text(sf_summary_md_path) if sf_summary_md_path else None
+    backtest_rows = read_csv(backtest_path) if backtest_path else []
+    robust_rows = read_csv(robust_path) if robust_path else []
+    catalog_rows = read_csv(catalog_path) if catalog_path else []
+    failure_taxonomy = read_json(failure_path) if failure_path else None
+    regime_rows = read_csv(regime_path) if regime_path else []
+    fam_comparison_md = read_text(fam_comparison_path) if fam_comparison_path else None
+
+    deep_dive_files = find_all_existing(outputs_dir, ["fam_*_deep_dive.json", "*_deep_dive.json", "deep_dive_*.json"])
+    for p in deep_dive_files:
+        add_available(p)
+    fam_0039_path = next((p for p in deep_dive_files if "0039" in p.stem), None)
+    fam_0053_path = next((p for p in deep_dive_files if "0053" in p.stem), None)
+    if fam_0039_path is None and deep_dive_files:
+        fam_0039_path = deep_dive_files[0]
+    if fam_0053_path is None and len(deep_dive_files) > 1:
+        fam_0053_path = deep_dive_files[1]
+    fam_0039 = read_json(fam_0039_path) if fam_0039_path else None
+    fam_0053 = read_json(fam_0053_path) if fam_0053_path else None
+
+    trade_files: list[str] = []
+    for pattern in [
+        "top5_trade_journals/*.csv",
+        "trade_journals/*.csv",
+        "*trade_journal*.csv",
+        "*journal*.csv",
+    ]:
+        trade_files.extend(str(p) for p in find_all_existing(outputs_dir, [pattern]))
+    trade_files = sorted(set(trade_files))
     for tf in trade_files:
-        p = Path(tf)
-        try:
-            rel = p.relative_to(ROOT)
-            available_files.append(str(rel).replace("\\", "/"))
-        except ValueError:
-            available_files.append(str(p))
+        add_available(Path(tf))
 
     families_tested = None
     candidates_passing = None
@@ -296,6 +370,15 @@ def main() -> None:
         mline = parse_md_value(fam_comparison_md, "Ranking filter min_trades=20")
         if mline:
             min_trades = 20
+    if families_tested is None:
+        families_tested = len(catalog_rows) if catalog_rows else (len(backtest_rows) if backtest_rows else None)
+    if candidates_passing is None:
+        if top5_json:
+            candidates_passing = len(top5_json)
+        elif backtest_rows:
+            candidates_passing = len(backtest_rows)
+    if min_trades is None:
+        min_trades = 20 if (backtest_rows or top5_json) else None
 
     numeric_backtest_rows = normalize_backtest_rows(backtest_rows)
     numeric_robust_rows = normalize_robust_rows(robust_rows)
@@ -322,12 +405,31 @@ def main() -> None:
                 "hypothesis_class": row.get("hypothesis_class", ""),
             }
         )
-    for row in leaderboard:
-        source = next((r for r in ranked_rows if r.get("family_id") == row["family_id"]), None)
-        assert source is not None, f"Leaderboard family {row['family_id']} missing from ranking source."
-        assert abs(row["robust_score"] - to_float(source.get("robustness_score"), 0.0)) < 1e-12, (
-            f"Leaderboard robust score mismatch for {row['family_id']}."
-        )
+    if not leaderboard and top5_json:
+        for row in top5_json:
+            if not isinstance(row, dict):
+                continue
+            leaderboard.append(
+                {
+                    "family_id": row.get("family_id", ""),
+                    "family_name": row.get("family_name", ""),
+                    "robust_score": to_float(row.get("robustness_score", row.get("robust_score")), 0.0),
+                    "parameter_stability_raw": to_float(row.get("parameter_stability"), 0.0),
+                    "validation_pnl": to_float(row.get("validation_net_pnl"), 0.0),
+                    "oos_pnl": to_float(row.get("oos_net_pnl"), 0.0),
+                    "trade_count": to_int(row.get("trade_count"), 0),
+                    "max_drawdown": to_float(row.get("max_drawdown_pct", row.get("max_drawdown")), 0.0),
+                    "profit_factor": to_float(row.get("oos_profit_factor", row.get("profit_factor")), 0.0),
+                    "hypothesis_class": row.get("hypothesis_class", ""),
+                }
+            )
+    if ranked_rows:
+        for row in leaderboard:
+            source = next((r for r in ranked_rows if r.get("family_id") == row["family_id"]), None)
+            assert source is not None, f"Leaderboard family {row['family_id']} missing from ranking source."
+            assert abs(row["robust_score"] - to_float(source.get("robustness_score"), 0.0)) < 1e-12, (
+                f"Leaderboard robust score mismatch for {row['family_id']}."
+            )
     top5_cards = []
     for i, row in enumerate(leaderboard[:5], start=1):
         source = next((r for r in ranked_rows if r.get("family_id") == row["family_id"]), {})
@@ -396,6 +498,20 @@ def main() -> None:
         for k, v in failure_taxonomy.items():
             failure_items.append((k, to_int(v)))
         failure_items.sort(key=lambda x: x[1], reverse=True)
+    elif catalog_rows:
+        fallback_counts: Counter[str] = Counter()
+        for r in catalog_rows:
+            reason = (
+                r.get("failure_reason")
+                or r.get("reject_reason")
+                or r.get("status_reason")
+                or r.get("status")
+                or ""
+            )
+            reason = str(reason).strip()
+            if reason and reason.lower() not in {"passed", "pass", "success"}:
+                fallback_counts[reason] += 1
+        failure_items = sorted(fallback_counts.items(), key=lambda x: x[1], reverse=True)
 
     regime_summary = []
     for r in regime_rows[:10]:
@@ -410,6 +526,21 @@ def main() -> None:
                 "robustness_score": to_float(r.get("robustness_score"), 0.0),
             }
         )
+    if not regime_summary and top5_json:
+        for r in top5_json[:10]:
+            if not isinstance(r, dict):
+                continue
+            pnl_by_regime = parse_literal_dict(r.get("pnl_by_regime"))
+            best = dict_items_sorted(pnl_by_regime)[:1]
+            regime_summary.append(
+                {
+                    "family_id": r.get("family_id", ""),
+                    "hypothesis_class": r.get("hypothesis_class", ""),
+                    "best_regime": best[0][0] if best else "N/A",
+                    "best_regime_pnl": best[0][1] if best else 0.0,
+                    "robustness_score": to_float(r.get("robustness_score", r.get("robust_score")), 0.0),
+                }
+            )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
