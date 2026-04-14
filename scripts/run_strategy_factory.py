@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
+from scripts.output_contract import ensure_artifacts_in_output_dir
 from src.strategy_factory import run_strategy_factory
 
 
@@ -63,6 +64,22 @@ def main() -> None:
         min_trades=args.min_trades,
         initial_capital=args.initial_capital,
     )
+    moved = ensure_artifacts_in_output_dir(
+        args.output_dir,
+        [
+            "top5_strategies.json",
+            "top5_strategies.md",
+            "strategy_factory_summary.json",
+            "strategy_factory_summary.md",
+            "family_backtest_results.csv",
+            "family_robustness_results.csv",
+            "family_catalog.csv",
+            "failure_taxonomy.json",
+            "regime_survival_table.csv",
+        ],
+    )
+    if moved:
+        print("Relocated legacy artifacts into --output-dir:", [str(p) for p in moved])
     print(f"Generated {result['n_generated']} families")
     print(f"Evaluated {result['n_evaluated']} families")
     print("Top 5 family_ids:", [x["family_id"] for x in result["top5"]])
