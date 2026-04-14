@@ -2,17 +2,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
 from typing import Any
 
 DEFAULT_INITIAL_CAPITAL = 10_000.0
 DEFAULT_MAX_LEVERAGE = 2.0
-DEFAULT_MAX_NOTIONAL_MULTIPLIER = 2.0
+DEFAULT_RISK_PER_TRADE_PCT = 0.01
 
 
 @dataclass
 class CostModel:
     fee_bps: float = 4.0
     slippage_bps: float = 1.5
+
+
+@dataclass
+class CapitalConfig:
+    initial_capital_usd: float = DEFAULT_INITIAL_CAPITAL
+    risk_per_trade_pct: float = DEFAULT_RISK_PER_TRADE_PCT
+    max_leverage: float = DEFAULT_MAX_LEVERAGE
+    max_gross_exposure_pct: float | None = None
+
+    def effective_max_notional(self, equity: float) -> float:
+        max_equity = max(0.0, equity)
+        leverage_cap = max_equity * max(0.0, self.max_leverage)
+        if self.max_gross_exposure_pct is None:
+            return leverage_cap
+        gross_cap = max_equity * max(0.0, self.max_gross_exposure_pct) / 100.0
+        return min(leverage_cap, gross_cap)
 
 
 def _ema(values: list[float], span: int) -> list[float]:
@@ -173,6 +190,14 @@ def _entry_signal(prev_row: dict[str, Any], row: dict[str, Any], params: dict[st
     return 1 if long_sig else -1 if short_sig else 0
 
 
+def to_float_safe(v: Any, default: float = 0.0) -> float:
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else default
+    except Exception:
+        return default
+
+
 def backtest_family(
     rows: list[dict[str, Any]],
     family: Any,
@@ -181,28 +206,46 @@ def backtest_family(
     initial_capital: float = DEFAULT_INITIAL_CAPITAL,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     p = family.parameters
+    cap_cfg = CapitalConfig(
+        initial_capital_usd=initial_capital,
+        risk_per_trade_pct=max(0.0, float(p.get("risk_per_trade", DEFAULT_RISK_PER_TRADE_PCT))),
+        max_leverage=DEFAULT_MAX_LEVERAGE,
+        max_gross_exposure_pct=None,
+    )
     trades: list[dict[str, Any]] = []
     in_pos = 0
     entry_price = stop = tp = None
     entry_ts = None
     entry_idx = 0
     throttle_until = -1
+    cash = initial_capital
+    realized_pnl = 0.0
     equity = initial_capital
     qty = 0.0
     risk_budget = 0.0
     notional_cap = 0.0
 
+    def _is_finite_positive(value: float) -> bool:
+        return math.isfinite(value) and value > 0.0
+
     def _size_position(entry_px: float, stop_px: float) -> tuple[float, float, float]:
-        risk_per_unit = max(abs(entry_px - stop_px), 1e-9)
-        risk_budget = max(0.0, equity) * max(0.0, p["risk_per_trade"])
-        qty_risk = risk_budget / risk_per_unit
-        notional_cap = min(
-            max(0.0, equity) * DEFAULT_MAX_LEVERAGE,
-            max(0.0, initial_capital) * DEFAULT_MAX_NOTIONAL_MULTIPLIER,
-        )
-        qty_notional = (notional_cap / abs(entry_px)) if entry_px else 0.0
-        qty = max(0.0, min(qty_risk, qty_notional))
-        return qty, risk_budget, notional_cap
+        if equity <= 0.0:
+            return 0.0, 0.0, 0.0
+        if not _is_finite_positive(entry_px) or not math.isfinite(stop_px):
+            return 0.0, 0.0, 0.0
+        risk_per_unit = abs(entry_px - stop_px)
+        if not _is_finite_positive(risk_per_unit):
+            return 0.0, 0.0, 0.0
+        risk_budget_local = max(0.0, equity) * max(0.0, cap_cfg.risk_per_trade_pct)
+        notional_cap_local = cap_cfg.effective_max_notional(equity)
+        if risk_budget_local <= 0.0 or notional_cap_local <= 0.0:
+            return 0.0, risk_budget_local, notional_cap_local
+        qty_risk = risk_budget_local / risk_per_unit
+        qty_notional = notional_cap_local / abs(entry_px)
+        qty_local = min(qty_risk, qty_notional)
+        if not _is_finite_positive(qty_local):
+            return 0.0, risk_budget_local, notional_cap_local
+        return qty_local, risk_budget_local, notional_cap_local
 
     for i in range(1, len(rows)):
         row = rows[i]
@@ -210,6 +253,9 @@ def backtest_family(
         if in_pos == 0 and i <= throttle_until:
             continue
         if in_pos == 0:
+            equity = cash
+            if equity <= 0.0:
+                continue
             if not _regime_pass(row, p["regime_block"]):
                 continue
             sig = _entry_signal(prev, row, p)
@@ -222,6 +268,9 @@ def backtest_family(
             tp = entry_price + risk * p["tp_r"] if sig == 1 else entry_price - risk * p["tp_r"]
             qty, risk_budget, notional_cap = _size_position(entry_price, stop)
             if qty <= 0.0:
+                in_pos = 0
+                continue
+            if (qty * abs(entry_price)) > (equity * cap_cfg.max_leverage + 1e-9):
                 in_pos = 0
                 continue
             entry_ts = row["timestamp"]
@@ -247,19 +296,24 @@ def backtest_family(
         slip_cost = (abs(entry_price) + abs(exit_price)) * qty * cost.slippage_bps / 10000
         net = gross - fees
         equity_before = equity
-        equity = max(0.0, equity + net)
+        realized_pnl += net
+        cash = max(0.0, cap_cfg.initial_capital_usd + realized_pnl)
+        equity = cash
         ts_exit = row["timestamp"]
         hold_mins = (ts_exit - entry_ts).total_seconds() / 60
         history = rows[entry_idx : i + 1]
         mfe = (max(x["high"] for x in history) - entry_price) * in_pos * qty
         mae = (min(x["low"] for x in history) - entry_price) * in_pos * qty
         entry_notional = abs(entry_price) * qty
+        exit_notional = abs(exit_price) * qty
         leverage_used = (entry_notional / equity_before) if equity_before > 0 else 0.0
         trades.append(
             {
                 "trade_id": f"{family.family_id}_{split_name}_{len(trades):05d}",
                 "timestamp_entry": entry_ts.isoformat(),
                 "timestamp_exit": ts_exit.isoformat(),
+                "entry_time": entry_ts.isoformat(),
+                "exit_time": ts_exit.isoformat(),
                 "side": "long" if in_pos == 1 else "short",
                 "setup_type": p["entry_block"],
                 "family_id": family.family_id,
@@ -269,6 +323,7 @@ def backtest_family(
                 "entry_price": entry_price,
                 "exit_price": exit_price,
                 "qty": qty,
+                "quantity": qty,
                 "gross_pnl": gross,
                 "net_pnl": net,
                 "fees": fees,
@@ -277,9 +332,13 @@ def backtest_family(
                 "risk_budget": risk_budget,
                 "notional_cap": notional_cap,
                 "entry_notional": entry_notional,
+                "exit_notional": exit_notional,
                 "leverage_used": leverage_used,
+                "leverage_used_or_gross_exposure": leverage_used,
                 "equity_before": equity_before,
                 "equity_after": equity,
+                "starting_equity_before_trade": equity_before,
+                "ending_equity_after_trade": equity,
                 "holding_time": str(ts_exit - entry_ts),
                 "holding_time_minutes": hold_mins,
                 "MFE": mfe,
@@ -313,12 +372,7 @@ def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFA
     pnls = [t["net_pnl"] for t in trades]
     wins = [x for x in pnls if x > 0]
     losses = [x for x in pnls if x < 0]
-    eq = []
-    c = 0.0
-    for p in pnls:
-        c += p
-        eq.append(c)
-    eq_abs = [initial_capital + x for x in eq]
+    eq_abs = [to_float_safe(t.get("ending_equity_after_trade"), initial_capital + sum(pnls[: i + 1])) for i, t in enumerate(trades)]
     peak = eq_abs[0]
     mdd = 0.0
     mdd_pct = 0.0
@@ -342,9 +396,9 @@ def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFA
 
     return {
         "starting_capital": initial_capital,
-        "ending_equity": initial_capital + sum(pnls),
+        "ending_equity": eq_abs[-1] if eq_abs else initial_capital,
         "net_pnl": sum(pnls),
-        "return_pct": (sum(pnls) / initial_capital * 100.0) if initial_capital else 0.0,
+        "return_pct": (((eq_abs[-1] / initial_capital) - 1.0) * 100.0) if initial_capital and eq_abs else 0.0,
         "profit_factor": (sum(wins) / abs(sum(losses))) if losses else sum(wins),
         "expectancy": sum(pnls) / len(pnls),
         "max_drawdown": mdd,

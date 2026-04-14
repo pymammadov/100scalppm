@@ -79,6 +79,18 @@ def test_notional_cap_limits_leverage() -> None:
     assert trade["leverage_used"] <= 2.0 + 1e-9
 
 
+def test_invalid_sizing_inputs_skip_trade() -> None:
+    ts = datetime(2026, 1, 3, tzinfo=timezone.utc)
+    rows = [
+        _mk_row(ts, 100.0, 101.0, 99.0, 100.0, atr=2.0),
+        _mk_row(ts + timedelta(minutes=1), 100.0, 103.0, 99.0, 102.0, atr=float("nan")),
+        _mk_row(ts + timedelta(minutes=2), 102.0, 104.0, 100.0, 103.0, atr=2.0),
+    ]
+    trades, metrics = backtest_family(rows, _family(stop_atr=1.0), CostModel(fee_bps=0.0, slippage_bps=0.0), "oos", initial_capital=10_000.0)
+    assert trades == []
+    assert metrics["ending_equity"] == 10_000.0
+
+
 def test_summarize_trades_reports_capital_usage_fields() -> None:
     metrics = summarize_trades(
         [
@@ -92,3 +104,25 @@ def test_summarize_trades_reports_capital_usage_fields() -> None:
     assert metrics["max_entry_notional"] == 1000.0
     assert abs(metrics["average_leverage_used"] - 0.105) < 1e-9
     assert metrics["max_leverage_used"] == 0.11
+
+
+def test_trade_journal_has_required_capital_fields() -> None:
+    ts = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    rows = [
+        _mk_row(ts, 100.0, 101.0, 99.0, 100.0, atr=2.0),
+        _mk_row(ts + timedelta(minutes=1), 100.0, 103.0, 99.0, 102.0, atr=2.0),
+        _mk_row(ts + timedelta(minutes=2), 102.0, 104.0, 100.0, 103.0, atr=2.0),
+    ]
+    trades, _ = backtest_family(rows, _family(stop_atr=1.0), CostModel(fee_bps=0.0, slippage_bps=0.0), "oos", initial_capital=10_000.0)
+    trade = trades[0]
+    for key in [
+        "entry_time",
+        "exit_time",
+        "quantity",
+        "entry_notional",
+        "exit_notional",
+        "starting_equity_before_trade",
+        "ending_equity_after_trade",
+        "leverage_used_or_gross_exposure",
+    ]:
+        assert key in trade
