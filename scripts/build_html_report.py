@@ -4,6 +4,7 @@ import argparse
 import csv
 import html
 import json
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -85,6 +86,14 @@ def find_all_existing_dynamic(outputs_dir: Path, patterns: list[str]) -> list[Pa
                 found.append(p)
                 seen.add(key)
     return found
+
+
+def normalize_cli_path_arg(path_value: str) -> Path:
+    """Normalize CLI path values so Windows-style separators also work on POSIX shells."""
+    cleaned = path_value.strip().strip("\"'")
+    if os.sep == "/":
+        cleaned = cleaned.replace("\\", "/")
+    return Path(cleaned).expanduser()
 
 
 def rel_output_path(path: Path) -> str:
@@ -284,11 +293,13 @@ def main() -> None:
     parser.add_argument("--initial-capital", type=float, default=10000.0)
     args = parser.parse_args()
 
-    outdir = Path(args.output_dir).expanduser()
+    outdir = normalize_cli_path_arg(args.output_dir)
+    if not outdir.is_absolute():
+        outdir = ROOT / outdir
     if args.out_file is None:
         out_file = outdir / "strategy_factory_report.html"
     else:
-        out_file_arg = Path(args.out_file).expanduser()
+        out_file_arg = normalize_cli_path_arg(str(args.out_file))
         out_file = out_file_arg if out_file_arg.is_absolute() else (outdir / out_file_arg)
 
     available_files: list[str] = []
