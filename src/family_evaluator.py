@@ -99,11 +99,11 @@ def prepare_features(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     avg_gain = _rolling_mean(gains, 14)
     avg_loss = _rolling_mean(losses, 14)
     rsi = []
-    for g, l in zip(avg_gain, avg_loss):
-        if l == 0:
+    for g, loss in zip(avg_gain, avg_loss):
+        if loss == 0:
             rsi.append(50.0)
         else:
-            rs = g / l
+            rs = g / loss
             rsi.append(100 - (100 / (1 + rs)))
 
     atr_med = _rolling_mean(atr, 50)

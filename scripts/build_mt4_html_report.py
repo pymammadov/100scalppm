@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT))
-from src.ranking import rank_candidates
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 
 def read_json(path: Path) -> Any:
@@ -388,6 +388,8 @@ def recompute_candidate_metrics_from_journal(
 
 
 def main() -> None:
+    from src.ranking import rank_candidates
+
     parser = argparse.ArgumentParser(description="Build MT4-style HTML report")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs")
     parser.add_argument("--out-file", type=Path, default=None)
@@ -495,7 +497,7 @@ h2 {{ font-size: 14px; margin: 16px 0 8px; border-bottom: 1px solid #cfcfcf; pad
         html_out += f"<tr><th>{safe(k)}</th><td class='{cls}'>{safe(val)}</td></tr>"
     html_out += "</table></div>"
 
-    html_out += f"""
+    html_out += """
 <h2>SECTION 3 — EQUITY / BALANCE CURVE</h2>
 <div class='chart-wrap'><canvas id='eqChart' width='1100' height='280'></canvas></div>
 <div class='chart-wrap' style='margin-top:8px;'><canvas id='ddChart' width='1100' height='180'></canvas></div>
