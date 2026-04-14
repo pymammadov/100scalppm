@@ -6,7 +6,7 @@ import math
 from typing import Any
 
 DEFAULT_INITIAL_CAPITAL = 10_000.0
-DEFAULT_MAX_LEVERAGE = 2.0
+DEFAULT_MAX_LEVERAGE = 1.0
 DEFAULT_RISK_PER_TRADE_PCT = 0.01
 
 
@@ -294,7 +294,7 @@ def backtest_family(
         gross = (exit_price - entry_price) * in_pos * qty
         fees = (abs(entry_price) + abs(exit_price)) * qty * cost.fee_bps / 10000
         slip_cost = (abs(entry_price) + abs(exit_price)) * qty * cost.slippage_bps / 10000
-        net = gross - fees
+        net = gross - fees - slip_cost
         equity_before = equity
         realized_pnl += net
         cash = max(0.0, cap_cfg.initial_capital_usd + realized_pnl)
