@@ -149,5 +149,7 @@ def run_strategy_factory(
         failure_counts=failure_counts,
         regime_survival=regime_survival,
         initial_capital=initial_capital,
+        min_trades=min_trades,
+        candidates_passing_filters=len(ranked),
     )
     return {"n_generated": len(families), "n_evaluated": len(backtest_rows), "top5": top5, "ranked": ranked}
