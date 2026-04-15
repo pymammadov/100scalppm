@@ -1,0 +1,5 @@
+# Runtime dependencies for 100scalppm strategy factory
+# All core logic uses the Python standard library only.
+# The packages below are needed for development/testing.
+
+pytest>=7.4,<9

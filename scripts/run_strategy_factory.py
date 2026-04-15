@@ -69,6 +69,7 @@ def main() -> None:
     moved = ensure_artifacts_in_output_dir(
         output_dir,
         [
+            "run_manifest.json",
             "top5_strategies.json",
             "top5_strategies.md",
             "strategy_factory_summary.json",

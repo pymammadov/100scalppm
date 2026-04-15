@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import math
 from typing import Any
 
@@ -43,27 +45,43 @@ def _ema(values: list[float], span: int) -> list[float]:
 
 
 def _rolling_max(vals: list[float], window: int) -> list[float]:
-    out = []
-    for i in range(len(vals)):
-        lo = max(0, i - window)
-        out.append(max(vals[lo:i]) if i > 0 else vals[0])
+    """O(n) sliding window maximum using a monotonic deque."""
+    out: list[float] = []
+    dq: deque[int] = deque()
+    for i, v in enumerate(vals):
+        while dq and dq[0] <= i - window:
+            dq.popleft()
+        while dq and vals[dq[-1]] <= v:
+            dq.pop()
+        dq.append(i)
+        out.append(vals[dq[0]])
     return out
 
 
 def _rolling_min(vals: list[float], window: int) -> list[float]:
-    out = []
-    for i in range(len(vals)):
-        lo = max(0, i - window)
-        out.append(min(vals[lo:i]) if i > 0 else vals[0])
+    """O(n) sliding window minimum using a monotonic deque."""
+    out: list[float] = []
+    dq: deque[int] = deque()
+    for i, v in enumerate(vals):
+        while dq and dq[0] <= i - window:
+            dq.popleft()
+        while dq and vals[dq[-1]] >= v:
+            dq.pop()
+        dq.append(i)
+        out.append(vals[dq[0]])
     return out
 
 
 def _rolling_mean(vals: list[float], window: int) -> list[float]:
-    out = []
-    for i in range(len(vals)):
-        lo = max(0, i - window + 1)
-        chunk = vals[lo : i + 1]
-        out.append(sum(chunk) / len(chunk))
+    """O(n) sliding window mean using a running sum."""
+    out: list[float] = []
+    running_sum = 0.0
+    for i, v in enumerate(vals):
+        running_sum += v
+        if i >= window:
+            running_sum -= vals[i - window]
+        count = min(i + 1, window)
+        out.append(running_sum / count)
     return out
 
 
@@ -129,8 +147,15 @@ def prepare_features(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+MIN_ROWS_FOR_SPLIT = 100
+
+
 def split_dataset(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     n = len(rows)
+    if n < MIN_ROWS_FOR_SPLIT:
+        raise ValueError(
+            f"Dataset too small for meaningful splits: {n} rows (minimum {MIN_ROWS_FOR_SPLIT})."
+        )
     i1 = int(n * 0.6)
     i2 = int(n * 0.8)
     return {"train": rows[:i1], "validation": rows[i1:i2], "oos": rows[i2:]}
@@ -383,11 +408,11 @@ def summarize_trades(trades: list[dict[str, Any]], initial_capital: float = DEFA
             mdd_pct = min(mdd_pct, ((e - peak) / peak) * 100.0)
 
     def group_sum(key_fn):
-        d = {}
+        d: dict[str, float] = {}
         for t in trades:
             k = key_fn(t)
             d[k] = d.get(k, 0.0) + t["net_pnl"]
-        return str(d)
+        return json.dumps(d)
 
     entry_notionals = [t.get("entry_notional", abs(t["entry_price"]) * t.get("qty", 0.0)) for t in trades]
     leverages = [t.get("leverage_used", 0.0) for t in trades]

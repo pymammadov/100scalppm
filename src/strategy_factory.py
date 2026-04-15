@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import logging
+import traceback
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from .family_definitions import StrategyFamily
 from .family_evaluator import CostModel, DEFAULT_INITIAL_CAPITAL, backtest_family, prepare_features, split_dataset
@@ -14,6 +20,34 @@ from .reporting import write_catalog, write_csv, write_summary, write_top5_artif
 from .robustness import run_robustness_tests
 
 REQUIRED_COLUMNS = {"timestamp", "open", "high", "low", "close", "volume"}
+
+
+def _csv_sha256(csv_path: Path) -> str:
+    h = hashlib.sha256()
+    with csv_path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_run_manifest(
+    output_dir: Path,
+    csv_path: Path,
+    n_families: int,
+    min_trades: int,
+    initial_capital: float,
+    n_rows: int,
+) -> None:
+    manifest = {
+        "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "csv_path": str(csv_path.resolve()),
+        "csv_sha256": _csv_sha256(csv_path),
+        "n_families": n_families,
+        "min_trades": min_trades,
+        "initial_capital_usd": initial_capital,
+        "data_rows": n_rows,
+    }
+    (output_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def _read_csv_rows(csv_path: Path) -> list[dict[str, Any]]:
@@ -52,7 +86,9 @@ def run_strategy_factory(
             if file.is_file():
                 file.unlink()
 
-    data = prepare_features(_read_csv_rows(csv_path))
+    raw_rows = _read_csv_rows(csv_path)
+    _write_run_manifest(output_dir, csv_path, n_families, min_trades, initial_capital, len(raw_rows))
+    data = prepare_features(raw_rows)
     splits = split_dataset(data)
     families = generate_strategy_families(n_families)
     family_lookup: dict[str, StrategyFamily] = {f.family_id: f for f in families}
@@ -131,8 +167,14 @@ def run_strategy_factory(
             backtest_rows.append(row)
             robust_rows.append(run_robustness_tests(splits, fam, base_cost, initial_capital=initial_capital))
             journals_top_source[fam.family_id] = split_trades["oos"]
-        except Exception:
+        except Exception as exc:
             failure_counts["evaluation_error"] += 1
+            logger.error(
+                "Family %s evaluation failed: %s\n%s",
+                fam.family_id,
+                exc,
+                traceback.format_exc(),
+            )
 
     write_csv(output_dir / "family_backtest_results.csv", backtest_rows)
     write_csv(output_dir / "family_robustness_results.csv", robust_rows)

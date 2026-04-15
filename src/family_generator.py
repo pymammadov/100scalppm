@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import itertools
 import random
 
@@ -26,7 +27,9 @@ CONFIRMATION_BLOCKS = ["rsi_filter", "ema_alignment", "atr_filter", "vwap_distan
 
 
 def _base_params(hypothesis_class: str, entry: str, exit_block: str, regime: str, conf: str, idx: int) -> dict:
-    rnd = random.Random(hash((hypothesis_class, entry, exit_block, regime, conf, idx)) & 0xFFFFFFFF)
+    key = f"{hypothesis_class}|{entry}|{exit_block}|{regime}|{conf}|{idx}"
+    seed = int(hashlib.sha256(key.encode()).hexdigest(), 16) % (2**32)
+    rnd = random.Random(seed)
     return {
         "entry_block": entry,
         "exit_block": exit_block,
